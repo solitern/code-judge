@@ -104,9 +104,9 @@ document.addEventListener("DOMContentLoaded", function () {
       var label = p.samples.length > 1 ? " " + (i + 1) : "";
       samplesHtml += '<div class="sample-group">';
       samplesHtml += '<div class="sample-label">\u8F93\u5165\u6837\u4F8B' + label + "</div>";
-      samplesHtml += '<div class="code-block">' + esc(s.input) + "</div>";
-      samplesHtml += '<div class="sample-label" style="margin-top:8px">\u8F93\u51FA\u6837\u4F8B' + label + "</div>";
-      samplesHtml += '<div class="code-block">' + esc(s.output) + "</div>";
+      samplesHtml += codeBlock(s.input);
+      samplesHtml += '<div class="sample-label" style="margin-top:6px">\u8F93\u51FA\u6837\u4F8B' + label + "</div>";
+      samplesHtml += codeBlock(s.output);
       if (s.explanation) {
         samplesHtml += '<div class="explanation"><pre>' + esc(s.explanation) + "</pre></div>";
       }
@@ -129,6 +129,10 @@ document.addEventListener("DOMContentLoaded", function () {
     var d = document.createElement("div");
     d.textContent = s;
     return d.innerHTML;
+  }
+
+  function codeBlock(text) {
+    return '<div class="code-block">' + esc(text) + '<button class="copy-btn" onclick="copyText(this)" title="\u590D\u5236">&#x2398;</button></div>';
   }
 
   // ===== Wandbox API 调用 =====
@@ -339,7 +343,21 @@ document.addEventListener("DOMContentLoaded", function () {
     $btnRun.disabled = loading;
     $btnSubmit.disabled = loading;
     $status.innerHTML = loading
-      ? '<span class="spinner" style="border-color:var(--gray-300);border-top-color:var(--primary)"></span>' + esc(text || "")
+      ? '<span class="spinner"></span>' + esc(text || "")
       : "";
   }
 });
+
+// 全局复制函数
+function copyText(btn) {
+  var block = btn.parentElement;
+  var text = block.textContent.replace(/\u2398$/, "").trim();
+  navigator.clipboard.writeText(text).then(function () {
+    btn.classList.add("copied");
+    btn.innerHTML = "&#x2713;";
+    setTimeout(function () {
+      btn.classList.remove("copied");
+      btn.innerHTML = "&#x2398;";
+    }, 1200);
+  });
+}
