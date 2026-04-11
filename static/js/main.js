@@ -1,6 +1,6 @@
 document.addEventListener("DOMContentLoaded", function () {
   // ===== 配置 =====
-  var PISTON_API = "https://emkc.org/api/v2/piston/execute";
+  var WANDBOX_API = "https://wandbox.org/api/compile.json";
   var PROBLEMS_FILE = "problems/week10.json";
 
   // ===== 状态 =====
@@ -131,18 +131,16 @@ document.addEventListener("DOMContentLoaded", function () {
     return d.innerHTML;
   }
 
-  // ===== Piston API 调用 =====
+  // ===== Wandbox API 调用 =====
   function executeCode(code, stdin) {
-    return fetch(PISTON_API, {
+    return fetch(WANDBOX_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        language: "c",
-        version: "10.2.0",
-        files: [{ name: "solution.c", content: code }],
+        code: code,
+        compiler: "gcc-head",
         stdin: stdin,
-        compile_timeout: 10000,
-        run_timeout: 5000,
+        save: false,
       }),
     }).then(function (r) {
       if (!r.ok) throw new Error("API \u8BF7\u6C42\u5931\u8D25 (" + r.status + ")");
@@ -151,20 +149,20 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   function parseResult(data) {
-    // 编译错误
-    if (data.compile && data.compile.code !== 0) {
-      return { status: "compile_error", message: data.compile.stderr || data.compile.output };
+    // 编译错误：status 非 "0" 且无 program_output
+    if (data.compiler_error && data.status !== "0" && !data.program_output) {
+      return { status: "compile_error", message: data.compiler_error || data.compiler_message };
     }
-    // 运行错误
-    if (data.run && data.run.code !== 0) {
-      return { status: "runtime_error", message: data.run.stderr || "\u8FD0\u884C\u65F6\u9519\u8BEF", output: data.run.stdout };
+    // 信号终止（超时等）
+    if (data.signal) {
+      return { status: "timeout", message: "\u8FD0\u884C\u8D85\u65F6\u6216\u88AB\u4FE1\u53F7\u7EC8\u6B62 (" + data.signal + ")" };
     }
-    // 超时
-    if (data.run && data.run.signal === "SIGKILL") {
-      return { status: "timeout", message: "\u8FD0\u884C\u8D85\u65F6\uFF08\u9650\u65F6 5 \u79D2\uFF09" };
+    // 运行时错误
+    if (data.status !== "0") {
+      return { status: "runtime_error", message: data.program_error || "\u8FD0\u884C\u65F6\u9519\u8BEF", output: data.program_output };
     }
     // 成功
-    return { status: "success", output: data.run.stdout };
+    return { status: "success", output: data.program_output };
   }
 
   // ===== 运行 =====
