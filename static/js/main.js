@@ -9,6 +9,7 @@ document.addEventListener("DOMContentLoaded", function () {
   var currentProblemIdx = 0;
   var editor = null;
   var savedCodes = {};
+  var hasLoaded = false;
 
   // ===== DOM =====
   var $tabs = document.getElementById("problemTabs");
@@ -69,7 +70,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // ===== 切换题目 =====
   function switchProblem(idx) {
-    if (problems.length > 0) {
+    if (hasLoaded) {
       savedCodes[currentProblemIdx] = editor.getValue();
     }
     currentProblemIdx = idx;
@@ -85,6 +86,7 @@ document.addEventListener("DOMContentLoaded", function () {
     var code = savedCodes[idx] !== undefined ? savedCodes[idx] : p.template;
     editor.setValue(code);
     editor.refresh();
+    hasLoaded = true;
 
     hideResult();
     $status.textContent = "";
