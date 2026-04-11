@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据结构实验</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/dracula.min.css">
+    <link rel="stylesheet" href="static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- 顶部标题栏 -->
+    <header class="header">
+        <div class="header-inner">
+            <div class="header-icon">&#x2318;</div>
+            <h1 class="header-title" id="pageTitle">数据结构实验</h1>
+            <div class="header-badge">C 语言</div>
+        </div>
+    </header>
+
+    <!-- 题目选项卡 -->
+    <nav class="tab-bar">
+        <div class="tab-bar-inner" id="problemTabs"></div>
+    </nav>
+
+    <!-- 主体区域 -->
+    <main class="main-container">
+        <!-- 左侧：题目描述 -->
+        <section class="panel panel-left" id="problemPanel">
+            <div class="panel-header">
+                <span class="panel-icon">&#x1F4D6;</span>
+                <span id="problemTitle">加载中...</span>
+            </div>
+            <div class="panel-body" id="problemContent">
+                <div class="loading">正在加载题目...</div>
+            </div>
+        </section>
+
+        <!-- 右侧：代码编辑器 + 结果 -->
+        <section class="panel panel-right">
+            <div class="panel-header">
+                <span class="panel-icon">&#x1F4BB;</span>
+                <span>代码编辑器</span>
+                <button class="btn-reset" id="btnReset" title="重置代码">&#x21BA; 重置</button>
+            </div>
+            <div class="editor-wrapper">
+                <textarea id="codeEditor"></textarea>
+            </div>
+            <div class="action-bar">
+                <div class="action-left">
+                    <span class="status-text" id="statusText"></span>
+                </div>
+                <div class="action-right">
+                    <button class="btn btn-run" id="btnRun">
+                        <span class="btn-icon">&#x25B6;</span> 运行
+                    </button>
+                    <button class="btn btn-submit" id="btnSubmit">
+                        <span class="btn-icon">&#x2714;</span> 提交
+                    </button>
+                </div>
+            </div>
+            <div class="result-panel" id="resultPanel" style="display:none;">
+                <div class="result-header">
+                    <span id="resultTitle">运行结果</span>
+                    <button class="btn-close" id="btnCloseResult">&times;</button>
+                </div>
+                <div class="result-body" id="resultBody"></div>
+            </div>
+        </section>
+    </main>
+
+    <!-- 底部 -->
+    <footer class="footer">
+        <span>数据结构实验在线评测 &middot; 仅供练习参考</span>
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/clike/clike.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/matchbrackets.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/edit/closebrackets.min.js"></script>
+    <script src="static/js/main.js"></script>
+</body>
+</html>
