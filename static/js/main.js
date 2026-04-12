@@ -1,6 +1,6 @@
 document.addEventListener("DOMContentLoaded", function () {
   // ===== 配置 =====
-  var WANDBOX_API = "https://wandbox.org/api/compile.json";
+  var JUDGE_API = "https://judge.solitern.cloud:2053/api/execute";
   var PROBLEMS_FILE = "problems/week10.json";
 
   // ===== 状态 =====
@@ -135,17 +135,12 @@ document.addEventListener("DOMContentLoaded", function () {
     return '<div class="code-block">' + esc(text) + '<button class="copy-btn" onclick="copyText(this)" title="\u590D\u5236">&#x2398;</button></div>';
   }
 
-  // ===== Wandbox API 调用 =====
+  // ===== Judge API 调用 =====
   function executeCode(code, stdin) {
-    return fetch(WANDBOX_API, {
+    return fetch(JUDGE_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code: code,
-        compiler: "gcc-head",
-        stdin: stdin,
-        save: false,
-      }),
+      body: JSON.stringify({ code: code, stdin: stdin }),
     }).then(function (r) {
       if (!r.ok) throw new Error("API \u8BF7\u6C42\u5931\u8D25 (" + r.status + ")");
       return r.json();
@@ -153,20 +148,19 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   function parseResult(data) {
-    // 编译错误：status 非 "0" 且无 program_output
-    if (data.compiler_error && data.status !== "0" && !data.program_output) {
-      return { status: "compile_error", message: data.compiler_error || data.compiler_message };
+    if (data.status === "compile_error") {
+      return { status: "compile_error", message: data.message };
     }
-    // 信号终止（超时等）
-    if (data.signal) {
-      return { status: "timeout", message: "\u8FD0\u884C\u8D85\u65F6\u6216\u88AB\u4FE1\u53F7\u7EC8\u6B62 (" + data.signal + ")" };
+    if (data.status === "timeout") {
+      return { status: "timeout", message: data.message };
     }
-    // 运行时错误
-    if (data.status !== "0") {
-      return { status: "runtime_error", message: data.program_error || "\u8FD0\u884C\u65F6\u9519\u8BEF", output: data.program_output };
+    if (data.status === "runtime_error") {
+      return { status: "runtime_error", message: data.message, output: data.stdout || "" };
     }
-    // 成功
-    return { status: "success", output: data.program_output };
+    if (data.status === "success") {
+      return { status: "success", output: data.stdout || "" };
+    }
+    return { status: "error", message: data.message || "\u672A\u77E5\u9519\u8BEF" };
   }
 
   // ===== 运行 =====
