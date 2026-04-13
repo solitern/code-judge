@@ -32,7 +32,7 @@
             "id": 2,
             "title": "判断BST前序遍历",
             "description": "给定一个由 N 个不同整数组成的序列，判断它是否可能是某棵二叉查找树（BST）的前序遍历序列。若是输出 YES，否则输出 NO。",
-            "inputFormat": "第一行：N，整数个数\n第二行：a1 a2 ... aN，N 个整数，均不重复",
+            "inputFormat": "第一行：N，整数个数\n第二行：a1 a2 ... aN，N 个整数，均不重复，1 ≤ ai ≤ 9999",
             "outputFormat": "YES 或 NO",
             "hint": "可以利用栈模拟 BST 前序遍历的过程，或使用递归方法验证序列的合法性。",
             "samples": [
