@@ -1,0 +1,38 @@
+{
+  "week": 1,
+  "title": "实验 1（示例）",
+  "problems": [
+    {
+      "id": 1,
+      "title": "两数之和",
+      "description": "给定两个整数 $a$ 和 $b$，计算它们的和。",
+      "inputFormat": "一行输入两个整数 $a$ 和 $b$，两数之间以空格分隔。",
+      "outputFormat": "输出一个整数，表示 $a+b$。",
+      "hint": "使用 `scanf` 读取两个整数，再用 `printf` 输出结果。",
+      "template": "#include <stdio.h>\n\nint main(void) {\n    int a, b;\n    scanf(\"%d %d\", &a, &b);\n\n    // 请在此处完成代码\n\n    return 0;\n}\n",
+      "time_limit_ms": 1000,
+      "memory_limit_mb": 128,
+      "output_limit_kb": 64,
+      "samples": [
+        {
+          "input": "1 2\n",
+          "output": "3\n"
+        }
+      ],
+      "testCases": [
+        {
+          "input": "-5 8\n",
+          "output": "3\n"
+        },
+        {
+          "input": "0 0\n",
+          "output": "0\n"
+        },
+        {
+          "input": "1000000 2000000\n",
+          "output": "3000000\n"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,95 @@
+name: code-judge
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: code-judge-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/code_judge.db}
+      RUNNER_URL: ${RUNNER_URL:-http://runner:8100}
+      FRONTEND_DIST: /app/static
+    volumes:
+      - app-data:/app/data
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      runner:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - judge-net
+
+  runner:
+    build:
+      context: ./runner
+      dockerfile: Dockerfile
+    container_name: code-judge-runner
+    restart: unless-stopped
+    environment:
+      RUNNER_TMP_ROOT: /tmp/judge-runner
+      RUNNER_REQUIRE_ISOLATION: "true"
+    tmpfs:
+      # Docker applies noexec to tmpfs by default. The runner must execute the
+      # freshly compiled binary from this otherwise isolated temporary mount.
+      - /tmp/judge-runner:size=256m,mode=0700,uid=10001,gid=10001,exec
+    read_only: true
+    pids_limit: 256
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      # Docker's default seccomp profile only permits unshare with
+      # CAP_SYS_ADMIN. The runner stays capability-free and uses this
+      # derived profile to allow only the unshare syscall it needs for a
+      # per-execution user and network namespace.
+      - seccomp:./runner/seccomp.json
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - judge-net
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: code-judge-caddy
+    restart: unless-stopped
+    profiles: ["caddy"]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CADDY_SITE_ADDRESS: ${CADDY_SITE_ADDRESS:-test.example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - app
+    networks:
+      - judge-net
+
+volumes:
+  app-data:
+    name: code-judge-app-data
+  caddy-data:
+    name: code-judge-caddy-data
+  caddy-config:
+    name: code-judge-caddy-config
+
+networks:
+  judge-net:
+    driver: bridge
+    name: code-judge-net

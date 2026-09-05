@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+frontend/dist/
+data/*.db
+data/*.db-*
+data/backup-*.db
+.env
+*.log
+.DS_Store
+*.tsbuildinfo
+*.timestamp-*.mjs
