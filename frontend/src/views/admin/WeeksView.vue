@@ -6,7 +6,7 @@
         <h2>周次管理</h2>
         <div class="actions">
           <input v-model.number="newWeekNo" type="number" min="1" max="52" placeholder="新周次编号" />
-          <input v-model="newWeekTitle" type="text" placeholder="标题，如：第十八周实验课" />
+          <input v-model="newWeekTitle" type="text" placeholder="标题，如：数组和链表" />
           <button class="btn-primary" @click="createWeek">新建周次</button>
         </div>
       </div>
@@ -43,7 +43,7 @@ import { formatShanghaiTime, parseUtcDateTime } from '../../utils/time'
 
 const router = useRouter()
 const weeks = ref<WeekOut[]>([])
-const newWeekNo = ref<number>(18)
+const newWeekNo = ref<number>(1)
 const newWeekTitle = ref('')
 let scheduledRefresh: ReturnType<typeof setTimeout> | null = null
 

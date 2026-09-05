@@ -1,13 +1,16 @@
 <template>
-  <div class="markdown-body" v-html="rendered"></div>
+  <div ref="container" class="markdown-body" v-html="rendered"></div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import renderMathInElement from 'katex/contrib/auto-render'
+import 'katex/dist/katex.min.css'
 
 const props = defineProps<{ source: string }>()
+const container = ref<HTMLElement | null>(null)
 
 const rendered = computed(() => {
   const html = marked.parse(props.source || '', { async: false }) as string
@@ -21,6 +24,26 @@ const rendered = computed(() => {
     link.rel = 'noopener noreferrer'
   })
   return document.body.innerHTML
+})
+
+function renderMath() {
+  if (!container.value) return
+  renderMathInElement(container.value, {
+    delimiters: [
+      { left: '$$', right: '$$', display: true },
+      { left: '\\[', right: '\\]', display: true },
+      { left: '\\(', right: '\\)', display: false },
+      { left: '$', right: '$', display: false },
+    ],
+    throwOnError: false,
+    trust: false,
+  })
+}
+
+onMounted(renderMath)
+watch(rendered, async () => {
+  await nextTick()
+  renderMath()
 })
 </script>
 
@@ -72,5 +95,11 @@ const rendered = computed(() => {
 }
 .markdown-body :deep(a:hover) {
   opacity: 0.82;
+}
+.markdown-body :deep(.katex-display) {
+  margin: 0.7em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.15em 0;
 }
 </style>
