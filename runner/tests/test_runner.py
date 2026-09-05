@@ -56,10 +56,24 @@ def test_compile_error():
     work = WORKDIR / "compile-error"
     work.mkdir(parents=True, exist_ok=True)
     src = work / "main.c"
-    src.write_text("int main(){ return ; }", encoding="utf-8")
+    src.write_text("int main(void) { return 0 }", encoding="utf-8")
     ok, err = compile_c(src, work / "main", Limits(cpu_seconds=2, wall_seconds=5, memory_mb=256, output_kb=64))
     assert not ok
     assert "error" in err.lower() or "错误" in err
+    assert "main.c:" in err
+    assert str(work) not in err
+
+
+def test_compile_error_sanitizer_removes_runner_workdir():
+    from app.compiler import _sanitize_compiler_output
+
+    workdir = Path("/tmp/judge-runner/judge-abcd1234")
+    output = f"{workdir}/main.c:3:5: error: expected expression"
+
+    sanitized = _sanitize_compiler_output(output, workdir)
+
+    assert sanitized == "main.c:3:5: error: expected expression"
+    assert "/tmp/judge-runner" not in sanitized
 
 
 def test_runtime_error():

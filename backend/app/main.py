@@ -109,7 +109,7 @@ def create_app() -> FastAPI:
     app.include_router(admin.router, prefix=settings.api_prefix)
 
     # Serve the built Vue frontend (Docker image copies it to /app/static).
-    dist = Path(settings.frontend_dist)
+    dist = Path(settings.frontend_dist).resolve()
     if dist.exists() and (dist / "index.html").exists():
         from fastapi.responses import FileResponse
 
@@ -125,7 +125,12 @@ def create_app() -> FastAPI:
         def frontend_spa(full_path: str):
             if full_path.startswith("api/"):
                 raise HTTPException(status_code=404, detail="Not Found")
-            candidate = dist / full_path
+            try:
+                candidate = (dist / full_path).resolve()
+            except (OSError, RuntimeError):
+                raise HTTPException(status_code=404, detail="Not Found") from None
+            if not candidate.is_relative_to(dist):
+                raise HTTPException(status_code=404, detail="Not Found")
             if candidate.is_file():
                 return FileResponse(str(candidate))
             return FileResponse(str(dist / "index.html"))

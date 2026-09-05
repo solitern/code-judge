@@ -24,7 +24,7 @@
     </section>
     <section class="problem-section" v-if="problem.hint">
       <div class="section-title">提示</div>
-      <div class="hint-box">{{ problem.hint }}</div>
+      <MarkdownView :source="problem.hint" class="hint-box" />
     </section>
     <section class="problem-section muted">
       限制：{{ problem.time_limit_ms }} ms / {{ problem.memory_limit_mb }} MB / 输出 {{ problem.output_limit_kb }} KB

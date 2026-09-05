@@ -12,6 +12,13 @@ from .sandbox import Limits, _set_limits
 logger = logging.getLogger("runner.compiler")
 
 
+def _sanitize_compiler_output(output: str, workdir: Path) -> str:
+    """Remove the per-request working directory from diagnostics."""
+    for prefix in {str(workdir), workdir.as_posix()}:
+        output = output.replace(prefix + "/", "").replace(prefix + "\\", "")
+    return output
+
+
 def compile_c(
     source_path: Path,
     binary_path: Path,
@@ -27,7 +34,7 @@ def compile_c(
         nproc=128,
         nofile=64,
     )
-    cmd = ["gcc", "-std=c11", "-O2", "-pipe", "-o", str(binary_path), str(source_path)]
+    cmd = ["gcc", "-std=c11", "-O2", "-pipe", "-o", binary_path.name, source_path.name]
     stdout_file = binary_path.parent / "compile.out"
     stderr_file = binary_path.parent / "compile.err"
     try:
@@ -53,13 +60,14 @@ def compile_c(
                 return False, "编译超时"
         if proc.returncode != 0:
             stderr_text = stderr_file.read_text(encoding="utf-8", errors="replace")
-            return False, stderr_text[:8000] or "编译失败"
+            sanitized = _sanitize_compiler_output(stderr_text, binary_path.parent)
+            return False, sanitized[:8000] or "编译失败"
         return True, ""
     except FileNotFoundError:
         return False, "GCC 未安装或不在 PATH 中"
-    except Exception as exc:
+    except Exception:
         logger.exception("compile failed")
-        return False, f"编译服务异常: {exc}"
+        return False, "编译服务异常"
     finally:
         for f in (stdout_file, stderr_file):
             try:

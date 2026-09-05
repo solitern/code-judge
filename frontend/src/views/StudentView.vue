@@ -539,7 +539,7 @@ watch(code, (v) => {
 .btn-outline { background: var(--card); color: var(--text-secondary); border: 1px solid var(--border); }
 .footer { text-align: center; padding: 5px 16px; font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 
-.mobile-main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.mobile-main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
 .mobile-tabs { display: flex; background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .mobile-tab { flex: 1; padding: 10px; border: none; background: none; font-size: 14px; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; }
 .mobile-tab.active { color: var(--primary); font-weight: 600; border-bottom-color: var(--primary); }
