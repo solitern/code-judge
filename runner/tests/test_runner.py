@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -218,3 +221,69 @@ int main(){
     assert result.status == "ACCEPTED"
     time.sleep(1.2)
     assert not marker.exists()
+
+
+def test_isolated_program_cannot_read_a_sibling_task_file():
+    from app.sandbox import RUNNER_TMP_ROOT, unshare_works
+
+    if not unshare_works():
+        pytest.skip("full namespace isolation is unavailable on this host")
+
+    sibling = RUNNER_TMP_ROOT / "sibling-secret"
+    sibling.mkdir(mode=0o700, parents=True, exist_ok=True)
+    secret = sibling / "secret.txt"
+    secret.write_text("must-not-leak", encoding="utf-8")
+    escaped_path = str(secret).replace("\\", "\\\\").replace('"', '\\"')
+    code = f'''#include <stdio.h>
+int main(void) {{
+    FILE *f = fopen("{escaped_path}", "r");
+    if (f) {{ fclose(f); puts("leaked"); return 1; }}
+    puts("blocked");
+    return 0;
+}}
+'''
+    try:
+        _, binary = _compile(code, "cross-task-read")
+        result = run_case(binary, "", Limits(cpu_seconds=1, wall_seconds=3, memory_mb=128, output_kb=64))
+        assert result.status == "ACCEPTED", result.stderr
+        assert result.stdout == "blocked\n"
+    finally:
+        shutil.rmtree(sibling, ignore_errors=True)
+
+
+def test_pid_namespace_kills_children_that_detach_from_process_group(monkeypatch):
+    import app.sandbox as sandbox
+
+    if not sandbox.unshare_works():
+        pytest.skip("full namespace isolation is unavailable on this host")
+
+    work, binary = _compile(
+        """#include <stdio.h>
+#include <sys/types.h>
+#include <unistd.h>
+int main(void) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        setsid();
+        sleep(1);
+        puts("escaped");
+        fflush(stdout);
+        while (1) {}
+    }
+    return 0;
+}
+""",
+        "pid-namespace-cleanup",
+    )
+    original_rmtree = sandbox.shutil.rmtree
+    monkeypatch.setattr(sandbox.shutil, "rmtree", lambda *args, **kwargs: None)
+    try:
+        result = run_case(binary, "", Limits(cpu_seconds=1, wall_seconds=2, memory_mb=128, output_kb=64))
+        assert result.status == "ACCEPTED", result.stderr
+        time.sleep(1.2)
+        case_dirs = list(work.glob("case_*"))
+        assert len(case_dirs) == 1
+        assert "escaped" not in (case_dirs[0] / "stdout.txt").read_text(encoding="utf-8")
+    finally:
+        for case_dir in work.glob("case_*"):
+            original_rmtree(case_dir, ignore_errors=True)

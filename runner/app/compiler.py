@@ -34,7 +34,9 @@ def compile_c(
         nproc=128,
         nofile=64,
     )
-    cmd = ["gcc", "-std=c11", "-O2", "-pipe", "-o", binary_path.name, source_path.name]
+    # A static executable can run inside the empty per-case chroot without
+    # exposing the container's libraries or filesystem to student code.
+    cmd = ["gcc", "-std=c11", "-O2", "-pipe", "-static", "-o", binary_path.name, source_path.name]
     stdout_file = binary_path.parent / "compile.out"
     stderr_file = binary_path.parent / "compile.err"
     try:

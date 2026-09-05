@@ -292,9 +292,11 @@ def _change_status(week: Week, new_status: str, publish_at: datetime | None = No
         week.archived_at = None
     elif new_status == "PUBLISHED":
         week.status = "PUBLISHED"
-        effective_publish_at = publish_at or week.publish_at or now
-        week.publish_at = _as_utc(effective_publish_at)
-        week.published_at = week.published_at or now
+        # This transition means "publish now".  In particular, do not keep a
+        # future timestamp left over from a previous SCHEDULED state, because
+        # the public query intentionally hides rows whose publish_at is future.
+        week.publish_at = now
+        week.published_at = now
         week.archived_at = None
     elif new_status == "ARCHIVED":
         week.status = "ARCHIVED"
@@ -767,14 +769,30 @@ def _week_snapshot_data(week: Week) -> dict[str, Any]:
 
 
 def _save_snapshot(db: Session, week: Week) -> WeekSnapshot:
-    latest = db.execute(
-        select(func.max(WeekSnapshot.version)).where(WeekSnapshot.week_id == week.id)
-    ).scalar() or 0
     db.flush()
-    # Refresh the relationship so the snapshot includes any problem/testcase
-    # changes made in the current transaction.
-    db.expire(week, ["problems"])
-    snap = WeekSnapshot(week_id=week.id, version=latest + 1, data_json=json.dumps(_week_snapshot_data(week), ensure_ascii=False))
+    week_id = week.id
+    latest = db.execute(
+        select(func.max(WeekSnapshot.version)).where(WeekSnapshot.week_id == week_id)
+    ).scalar() or 0
+    # Relationship collections may already have been loaded before rows were
+    # inserted/deleted through their foreign keys. Reload the complete graph
+    # from the flushed transaction so snapshots never serialize stale cases.
+    db.expire_all()
+    fresh_week = db.execute(
+        select(Week)
+        .options(
+            selectinload(Week.problems).selectinload(Problem.testcases),
+            selectinload(Week.problems).selectinload(Problem.solution),
+            selectinload(Week.notice),
+        )
+        .where(Week.id == week_id)
+        .execution_options(populate_existing=True)
+    ).scalar_one()
+    snap = WeekSnapshot(
+        week_id=fresh_week.id,
+        version=latest + 1,
+        data_json=json.dumps(_week_snapshot_data(fresh_week), ensure_ascii=False),
+    )
     db.add(snap)
     db.flush()
     # Keep at most 10 snapshots per week.

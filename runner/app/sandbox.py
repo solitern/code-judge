@@ -2,11 +2,10 @@
 
 This sandbox is designed for Linux containers.  It enforces resource limits
 through setrlimit and runs the child program as an unprivileged user.  When
-the ``unshare`` command is available (util-linux), it additionally creates a
-new user and network namespace for each test case process: inside the
-namespace the program sees no external network interfaces, which prevents
-the tested program from reaching app, runner or any other container over the
-Docker bridge network.
+the required tools are available, it creates user, network, mount and PID
+namespaces for every test case.  The statically linked program is then
+chrooted into an otherwise empty per-case directory, so it cannot inspect
+the runner filesystem, sibling jobs or host processes.
 """
 from __future__ import annotations
 
@@ -55,19 +54,30 @@ def has_unshare() -> bool:
     return shutil.which("unshare") is not None
 
 
+def has_chroot() -> bool:
+    return shutil.which("chroot") is not None
+
+
+def has_prlimit() -> bool:
+    return shutil.which("prlimit") is not None
+
+
 _unshare_works: bool | None = None
 
 
 def unshare_works() -> bool:
-    """Return True when unshare can create a user+network namespace."""
+    """Return True when the complete namespace + chroot chain is available."""
     global _unshare_works
     if _unshare_works is None:
-        if not has_unshare():
+        if not has_unshare() or not has_chroot() or not has_prlimit():
             _unshare_works = False
         else:
             try:
                 proc = subprocess.run(
-                    ["unshare", "-U", "-r", "-n", "--", "true"],
+                    [
+                        "unshare", "-U", "-r", "-n", "-m", "-p", "-f", "--",
+                        "prlimit", "--nproc=32:32", "--", "chroot", "/", "/bin/true",
+                    ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=5,
@@ -78,7 +88,7 @@ def unshare_works() -> bool:
     return _unshare_works
 
 
-def _set_limits(limits: Limits) -> None:
+def _set_limits(limits: Limits, *, set_nproc: bool = True) -> None:
     """Apply resource limits in the forked child before exec."""
     try:
         os.setsid()
@@ -97,7 +107,8 @@ def _set_limits(limits: Limits) -> None:
     _try_set(resource.RLIMIT_CPU, limits.cpu_seconds, limits.cpu_seconds + 2)
     _try_set(resource.RLIMIT_AS, limits.memory_mb * mb)
     _try_set(resource.RLIMIT_FSIZE, limits.output_kb * 1024)
-    _try_set(resource.RLIMIT_NPROC, limits.nproc)
+    if set_nproc:
+        _try_set(resource.RLIMIT_NPROC, limits.nproc)
     _try_set(resource.RLIMIT_NOFILE, limits.nofile)
     _try_set(resource.RLIMIT_STACK, 64 * mb)
 
@@ -124,13 +135,23 @@ def run_case(
     stderr_path = case_dir / "stderr.txt"
     stdin_path.write_text(input_text, encoding="utf-8")
 
-    # The binary is 0700 owned by the current (non-root) user.  In the
-    # unshare user namespace the current uid is mapped to root, so it can
-    # execute it; without unshare the same uid owns the file as well.
-    if unshare_works():
-        cmd = ["unshare", "-U", "-r", "-n", "--", "./main"]
+    # Give each execution its own root containing only the static binary.
+    # Standard streams are opened by the parent first, so no input/output
+    # files or container paths need to be visible inside the chroot.
+    isolated = unshare_works()
+    if isolated:
+        case_binary = case_dir / "main"
+        shutil.copy2(binary_path, case_binary)
+        case_binary.chmod(0o700)
+        cmd = [
+            "unshare", "-U", "-r", "-n", "-m", "-p", "-f", "--",
+            "prlimit", f"--nproc={limits.nproc}:{limits.nproc}", "--",
+            "chroot", ".", "/main",
+        ]
+        child_cwd = str(case_dir)
     else:
         cmd = ["./main"]
+        child_cwd = str(workdir)
 
     start = time.monotonic()
     proc: subprocess.Popen | None = None
@@ -141,9 +162,11 @@ def run_case(
                 stdin=fin,
                 stdout=fout,
                 stderr=ferr,
-                cwd=str(workdir),
+                cwd=child_cwd,
                 env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C"},
-                preexec_fn=lambda: _set_limits(limits),
+                # PID namespaces require one fork. Apply RLIMIT_NPROC through
+                # prlimit after that fork; all other limits can be set here.
+                preexec_fn=lambda: _set_limits(limits, set_nproc=not isolated),
                 close_fds=True,
             )
             deadline = start + limits.wall_seconds

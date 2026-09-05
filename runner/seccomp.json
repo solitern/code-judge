@@ -638,6 +638,12 @@
 		},
 		{
 			"names": [
+				"chroot"
+			],
+			"action": "SCMP_ACT_ALLOW"
+		},
+		{
+			"names": [
 				"bpf",
 				"clone",
 				"clone3",

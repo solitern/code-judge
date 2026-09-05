@@ -48,10 +48,9 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-      # Docker's default seccomp profile only permits unshare with
-      # CAP_SYS_ADMIN. The runner stays capability-free and uses this
-      # derived profile to allow only the unshare syscall it needs for a
-      # per-execution user and network namespace.
+      # The runner stays capability-free. This derived profile permits the
+      # namespace/chroot setup used to give each execution its own user,
+      # network, mount, PID and filesystem view.
       - seccomp:./runner/seccomp.json
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=3)"]

@@ -1,13 +1,28 @@
 from __future__ import annotations
 
+import json
+
 import app.db as db_module
-from app.schemas import ProblemUpsert, WeekCreate, WeekUpdate
+from sqlalchemy import select
+
+from app.models import WeekSnapshot
+from app.schemas import (
+    ProblemUpsert,
+    TestCaseImportItem as CaseImportItem,
+    TestCaseUpsert as CaseUpsert,
+    WeekCreate,
+    WeekUpdate,
+)
 from app.services.admin import (
     create_week,
+    delete_testcase,
+    import_cases_json,
+    list_testcases,
     list_snapshots,
     rollback_snapshot,
     update_week,
     upsert_problem,
+    upsert_testcase,
 )
 
 
@@ -39,4 +54,62 @@ def test_snapshot_rollback_restores_week_notice():
 
     rolled = rollback_snapshot(db, wid, target.id)
     assert rolled.notice == "第一版通知"
+    db.close()
+
+
+def test_case_snapshots_reload_add_bulk_delete_and_consecutive_rollbacks():
+    db = db_module.SessionLocal()
+    week = create_week(db, WeekCreate(week=42, title="案例快照"))
+    wid = week.id
+    upsert_problem(db, wid, 1, ProblemUpsert(stable_id=1, title="题目一"))
+
+    first = upsert_testcase(
+        db,
+        wid,
+        1,
+        CaseUpsert(input="first", output="1", is_public=True, sort_order=1),
+    )
+    snapshot_after_add = db.execute(
+        select(WeekSnapshot)
+        .where(WeekSnapshot.week_id == wid)
+        .order_by(WeekSnapshot.version.desc())
+    ).scalars().first()
+    assert snapshot_after_add is not None
+    add_data = json.loads(snapshot_after_add.data_json)
+    assert [case["input"] for case in add_data["problems"][0]["testcases"]] == ["first"]
+
+    import_cases_json(
+        db,
+        wid,
+        1,
+        [
+            CaseImportItem(input="second", output="2"),
+            CaseImportItem(input="third", output="3"),
+        ],
+    )
+    snapshot_after_bulk = db.execute(
+        select(WeekSnapshot)
+        .where(WeekSnapshot.week_id == wid)
+        .order_by(WeekSnapshot.version.desc())
+    ).scalars().first()
+    assert snapshot_after_bulk is not None
+    bulk_data = json.loads(snapshot_after_bulk.data_json)
+    assert [case["input"] for case in bulk_data["problems"][0]["testcases"]] == [
+        "first", "second", "third",
+    ]
+
+    delete_testcase(db, wid, 1, first.id)
+    snapshot_after_delete = db.execute(
+        select(WeekSnapshot)
+        .where(WeekSnapshot.week_id == wid)
+        .order_by(WeekSnapshot.version.desc())
+    ).scalars().first()
+    assert snapshot_after_delete is not None
+    delete_data = json.loads(snapshot_after_delete.data_json)
+    assert [case["input"] for case in delete_data["problems"][0]["testcases"]] == ["second", "third"]
+
+    rollback_snapshot(db, wid, snapshot_after_add.id)
+    assert [case.input for case in list_testcases(db, wid, 1)] == ["first"]
+    rollback_snapshot(db, wid, snapshot_after_bulk.id)
+    assert [case.input for case in list_testcases(db, wid, 1)] == ["first", "second", "third"]
     db.close()

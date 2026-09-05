@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy import select
@@ -16,6 +18,18 @@ from .scheduling import as_utc as _as_utc
 from .scheduling import publish_due_weeks, utcnow
 
 logger = logging.getLogger("app.public")
+
+
+@dataclass(frozen=True)
+class PreparedJudge:
+    """All data needed by the runner, detached from SQLAlchemy objects."""
+
+    runner_payload: dict[str, Any]
+    mode: str
+    week_id: int
+    problem_id: int
+    code_bytes: int
+    case_count: int
 
 
 def _published_filter():
@@ -146,9 +160,9 @@ def _limits_for(p: Problem) -> dict:
     }
 
 
-async def run_sample(request: Request, db: Session, payload) -> RunResponse:
+def prepare_sample(db: Session, payload) -> PreparedJudge:
     _validate_code(payload.code)
-    week, problem = _get_problem_for_run(db, payload.week_id, payload.problem_id)
+    _, problem = _get_problem_for_run(db, payload.week_id, payload.problem_id)
     samples = [t for t in problem.testcases if t.enabled and t.is_public]
     samples.sort(key=lambda t: (t.sort_order, t.id))
     if payload.sample_index < 0 or payload.sample_index >= len(samples):
@@ -158,22 +172,22 @@ async def run_sample(request: Request, db: Session, payload) -> RunResponse:
         "input": sample.input_text,
         "expected": sample.expected_output,
     }
-    return await _dispatch_judge(request, payload.code, [case], problem, mode="sample", reveal=True)
+    return _prepare_judge(payload.code, [case], problem, mode="sample")
 
 
-async def run_custom(request: Request, db: Session, payload) -> RunResponse:
+def prepare_custom(db: Session, payload) -> PreparedJudge:
     _validate_code(payload.code)
-    week, problem = _get_problem_for_run(db, payload.week_id, payload.problem_id)
+    _, problem = _get_problem_for_run(db, payload.week_id, payload.problem_id)
     settings = get_settings()
     if len(payload.input.encode("utf-8")) > settings.max_custom_input_bytes:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义输入长度超出限制")
     case = {"input": payload.input}
-    return await _dispatch_judge(request, payload.code, [case], problem, mode="custom", reveal=True)
+    return _prepare_judge(payload.code, [case], problem, mode="custom")
 
 
-async def run_all(request: Request, db: Session, payload) -> RunResponse:
+def prepare_all(db: Session, payload) -> PreparedJudge:
     _validate_code(payload.code)
-    week, problem = _get_problem_for_run(db, payload.week_id, payload.problem_id)
+    _, problem = _get_problem_for_run(db, payload.week_id, payload.problem_id)
     settings = get_settings()
     cases = sorted(
         [t for t in problem.testcases if t.enabled],
@@ -187,17 +201,15 @@ async def run_all(request: Request, db: Session, payload) -> RunResponse:
             detail="该题测试案例数量超过判题服务配置，请联系管理员",
         )
     runner_cases = [{"input": t.input_text, "expected": t.expected_output} for t in cases]
-    return await _dispatch_judge(request, payload.code, runner_cases, problem, mode="all", reveal=False)
+    return _prepare_judge(payload.code, runner_cases, problem, mode="all")
 
 
-async def _dispatch_judge(
-    request: Request,
+def _prepare_judge(
     code: str,
     cases: list[dict],
     problem: Problem,
     mode: str,
-    reveal: bool,
-) -> RunResponse:
+) -> PreparedJudge:
     settings = get_settings()
     for c in cases:
         if len(c["input"].encode("utf-8")) > settings.max_case_bytes:
@@ -205,7 +217,7 @@ async def _dispatch_judge(
         if c.get("expected") and len(c["expected"].encode("utf-8")) > settings.max_case_bytes:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="测试案例输出长度超出限制")
 
-    payload = {
+    runner_payload = {
         "code": code,
         "cases": cases,
         "limits": {
@@ -216,8 +228,21 @@ async def _dispatch_judge(
         "mode": mode,
     }
 
+    return PreparedJudge(
+        runner_payload=runner_payload,
+        mode=mode,
+        week_id=problem.week_id,
+        problem_id=problem.stable_id,
+        code_bytes=len(code.encode("utf-8")),
+        case_count=len(cases),
+    )
+
+
+async def dispatch_judge(request: Request, prepared: PreparedJudge) -> RunResponse:
+    """Queue and run a prepared request without retaining a database session."""
+
     async def task():
-        return await call_runner(payload)
+        return await call_runner(prepared.runner_payload)
 
     limiter = get_judge_limiter()
     ip = client_ip(request)
@@ -228,6 +253,12 @@ async def _dispatch_judge(
 
     logger.info(
         "judge run mode=%s week_id=%s problem_id=%s ip=%s code_bytes=%d case_count=%d status=%s",
-        mode, problem.week_id, problem.stable_id, ip, len(code.encode("utf-8")), len(cases), result.get("status"),
+        prepared.mode,
+        prepared.week_id,
+        prepared.problem_id,
+        ip,
+        prepared.code_bytes,
+        prepared.case_count,
+        result.get("status"),
     )
     return RunResponse(**result) if isinstance(result, dict) else result

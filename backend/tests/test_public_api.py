@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -151,6 +152,57 @@ def test_run_sample_success_calls_runner(client, monkeypatch):
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ACCEPTED"
+
+
+def test_run_closes_database_session_before_waiting_for_runner(client, monkeypatch):
+    from app import db as db_module
+    from app.api import public as public_api
+    import app.services.public as pub
+
+    with db_module.SessionLocal() as db:
+        _make_week(db, "PUBLISHED", datetime.now(timezone.utc) - timedelta(hours=1))
+
+    original_factory = db_module.SessionLocal
+    session_closed = threading.Event()
+    prepare_thread_ids: list[int] = []
+    original_prepare = pub.prepare_sample
+
+    class TrackingSessionContext:
+        def __init__(self):
+            self.db = original_factory()
+
+        def __enter__(self):
+            return self.db
+
+        def __exit__(self, exc_type, exc, traceback):
+            self.db.close()
+            session_closed.set()
+
+    def tracked_prepare(db, payload):
+        prepare_thread_ids.append(threading.get_ident())
+        return original_prepare(db, payload)
+
+    async def fake_call_runner(payload):
+        assert session_closed.is_set()
+        assert prepare_thread_ids[0] != threading.get_ident()
+        return {
+            "mode": "sample", "status": "ACCEPTED", "summary": "通过",
+            "compiled": True, "compile_error": None, "passed_count": 1, "total_count": 1,
+            "results": [{"case_id": 1, "passed": True, "status": "ACCEPTED", "time_ms": 1.0,
+                         "input": "1 2", "expected": "3", "actual": "3", "stderr": None}],
+        }
+
+    monkeypatch.setattr(public_api.db_module, "SessionLocal", TrackingSessionContext)
+    monkeypatch.setattr(pub, "prepare_sample", tracked_prepare)
+    monkeypatch.setattr(pub, "call_runner", fake_call_runner)
+
+    response = client.post(
+        "/api/public/run/sample",
+        json={"week_id": 1, "problem_id": 1, "code": "int main(){}", "sample_index": 0},
+    )
+
+    assert response.status_code == 200
+    assert session_closed.is_set()
 
 
 def test_run_all_does_not_leak_hidden_cases(client, monkeypatch):

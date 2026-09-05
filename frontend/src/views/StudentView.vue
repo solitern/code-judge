@@ -109,6 +109,19 @@
     </main>
 
     <main v-else class="mobile-main">
+      <div v-if="problems.length > 1" class="mobile-problem-picker">
+        <label for="mobile-problem-select">当前题目</label>
+        <select
+          id="mobile-problem-select"
+          :value="currentIndex"
+          aria-label="选择题目"
+          @change="onMobileProblemChange"
+        >
+          <option v-for="(p, i) in problems" :key="p.id" :value="i">
+            题目 {{ p.id }}：{{ p.title }}
+          </option>
+        </select>
+      </div>
       <div class="mobile-tabs">
         <button v-for="(t, i) in ['题目', '代码', '结果']" :key="t" class="mobile-tab" :class="{ active: mobileTab === i }" @click="switchMobileTab(i)">
           {{ t }}
@@ -276,6 +289,13 @@ function switchProblem(i: number) {
   }
   currentIndex.value = i
   restoreCode()
+}
+
+function onMobileProblemChange(event: Event) {
+  const index = Number((event.target as HTMLSelectElement).value)
+  if (Number.isInteger(index) && index >= 0 && index < problems.value.length) {
+    switchProblem(index)
+  }
 }
 
 function restoreCode() {
@@ -540,6 +560,9 @@ watch(code, (v) => {
 .footer { text-align: center; padding: 5px 16px; font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
 
 .mobile-main { flex: 1; display: flex; flex-direction: column; min-height: 0; padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
+.mobile-problem-picker { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--card); flex-shrink: 0; }
+.mobile-problem-picker label { flex-shrink: 0; color: var(--text-muted); font-size: 12px; }
+.mobile-problem-picker select { min-width: 0; flex: 1; padding: 7px 30px 7px 9px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text-primary); font-size: 13px; }
 .mobile-tabs { display: flex; background: var(--card); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .mobile-tab { flex: 1; padding: 10px; border: none; background: none; font-size: 14px; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; }
 .mobile-tab.active { color: var(--primary); font-weight: 600; border-bottom-color: var(--primary); }

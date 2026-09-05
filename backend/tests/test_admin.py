@@ -90,6 +90,11 @@ def test_schedule_and_immediate_publish(client):
     r = client.patch(f"/api/admin/weeks/{week_id}", json={"status": "PUBLISHED"}, headers=h)
     assert r.status_code == 200
     assert r.json()["status"] == "PUBLISHED"
+    publish_at = datetime.fromisoformat(r.json()["publish_at"].replace("Z", "+00:00"))
+    assert publish_at < datetime.now(timezone.utc) + timedelta(seconds=1)
+    public = client.get("/api/public/weeks/current")
+    assert public.status_code == 200
+    assert public.json()["id"] == week_id
 
 
 def test_due_schedule_is_materialized_and_datetimes_are_utc(client):
