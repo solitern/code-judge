@@ -79,6 +79,7 @@ export interface WeekJsonImportResult {
   problems_imported: number
   samples_imported: number
   hidden_cases_imported: number
+  solutions_imported: number
 }
 
 export interface DashboardOut {

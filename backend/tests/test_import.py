@@ -24,6 +24,7 @@ def _write_legacy(tmp_path):
                 "samples": [{"input": "1", "output": "2", "explanation": "说明"}],
                 "testCases": [{"input": "3", "output": "4"}, {"input": "5", "output": "6"}],
                 "template": "#include <stdio.h>\nint main(){return 0;}",
+                "solution": "#include <stdio.h>\nint main(){return 0;}\n",
             }
         ],
     }
@@ -39,18 +40,22 @@ def test_import_legacy_idempotent(tmp_path):
     assert report.problems_imported == 1
     assert report.samples_imported == 1
     assert report.hidden_cases_imported == 2
+    assert report.solutions_imported == 1
     # Second import should not duplicate problems.
     report2 = import_legacy_json(db, str(problems_dir), dry_run=False)
     assert report2.problems_imported == 0
     assert report2.weeks_updated == 1
     from sqlalchemy import func, select
-    from app.models import Problem, TestCase, Week
+    from app.models import Problem, Solution, TestCase, Week
     week = db.execute(select(Week).where(Week.week == 30)).scalar_one()
     problems = db.execute(select(Problem).where(Problem.week_id == week.id)).scalars().all()
     assert len(problems) == 1
     cases = db.execute(select(TestCase).where(TestCase.problem_id == problems[0].id)).scalars().all()
     # Re-import replaces source-controlled cases instead of duplicating them.
     assert len(cases) == 3
+    solution = db.execute(select(Solution).where(Solution.problem_id == problems[0].id)).scalar_one()
+    assert "stdio.h" in solution.code
+    assert solution.verified is False
 
 
 def test_import_dry_run_makes_no_changes(tmp_path):

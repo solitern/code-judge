@@ -7,8 +7,16 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Problem, TestCase, Week
+from ..models import Problem, Solution, TestCase, Week
 from ..schemas import ImportReport
+
+
+def _legacy_solution_code(pdata: dict) -> str | None:
+    for key in ("solution", "standard_answer", "answer"):
+        value = pdata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
 
 
 def import_legacy_json(db: Session, path: str = "example", dry_run: bool = False) -> ImportReport:
@@ -56,7 +64,9 @@ def import_legacy_json(db: Session, path: str = "example", dry_run: bool = False
                 for pdata in problems_data:
                     report.problems_imported += 1
                     report.samples_imported += len(pdata.get("samples", []))
-                    report.hidden_cases_imported += len(pdata.get("testCases", []))
+                    report.hidden_cases_imported += len(pdata.get("testCases", pdata.get("test_cases", [])))
+                    if _legacy_solution_code(pdata):
+                        report.solutions_imported += 1
                     report.details.append(f"  将导入题目 week={week_no} problem={pdata.get('id')}")
             continue
 
@@ -94,9 +104,18 @@ def import_legacy_json(db: Session, path: str = "example", dry_run: bool = False
                 problem.version = (problem.version or 0) + 1
                 # Idempotent re-import: the JSON file is the source of truth for
                 # test cases, so replace existing test cases when re-importing.
-                for old_tc in list(problem.testcases):
-                    db.delete(old_tc)
-                db.flush()
+                problem.testcases.clear()
+
+            solution_code = _legacy_solution_code(pdata)
+            if solution_code:
+                report.solutions_imported += 1
+                if not dry_run and problem is not None:
+                    if problem.solution is None:
+                        problem.solution = Solution(code=solution_code, verified=False)
+                    else:
+                        problem.solution.code = solution_code
+                        problem.solution.verified = False
+                        problem.solution.last_verified_at = None
 
             # Samples -> public test cases
             samples = pdata.get("samples", [])
@@ -105,8 +124,7 @@ def import_legacy_json(db: Session, path: str = "example", dry_run: bool = False
                     continue
                 report.samples_imported += 1
                 if not dry_run and problem is not None:
-                    db.add(TestCase(
-                        problem_id=problem.id,
+                    problem.testcases.append(TestCase(
                         is_public=True,
                         input_text=s.get("input", ""),
                         expected_output=s.get("output", ""),
@@ -114,14 +132,13 @@ def import_legacy_json(db: Session, path: str = "example", dry_run: bool = False
                         enabled=True,
                     ))
             # testCases -> hidden test cases
-            cases = pdata.get("testCases", [])
+            cases = pdata.get("testCases", pdata.get("test_cases", []))
             for i, c in enumerate(cases):
                 if not isinstance(c, dict):
                     continue
                 report.hidden_cases_imported += 1
                 if not dry_run and problem is not None:
-                    db.add(TestCase(
-                        problem_id=problem.id,
+                    problem.testcases.append(TestCase(
                         is_public=False,
                         input_text=c.get("input", ""),
                         expected_output=c.get("output", ""),

@@ -38,6 +38,7 @@ def main() -> int:
         print(f"problems_imported: {report.problems_imported}")
         print(f"samples_imported: {report.samples_imported}")
         print(f"hidden_cases_imported: {report.hidden_cases_imported}")
+        print(f"solutions_imported: {report.solutions_imported}")
         print("details:")
         for d in report.details:
             print("  " + d)

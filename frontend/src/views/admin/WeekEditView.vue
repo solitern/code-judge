@@ -38,7 +38,7 @@
         <div class="week-editor-head">
           <div>
             <h3>周次信息</h3>
-            <p>标题可直接修改；也可以导入 week*.json，一次更新标题、题目和测试案例。</p>
+            <p>周次序号和标题可直接修改；序号未被其他周次占用即可保存。也可以导入 week*.json，一次更新标题、题目、测试案例和标准答案。</p>
           </div>
           <div class="week-import-actions">
             <input
@@ -54,6 +54,18 @@
           </div>
         </div>
         <div class="week-title-row">
+          <div class="field week-no-field">
+            <label for="week-no">周次序号</label>
+            <input
+              id="week-no"
+              v-model.number="weekNoDraft"
+              type="number"
+              min="1"
+              max="52"
+              placeholder="1-52"
+              @input="weekInfoDirty = true"
+            />
+          </div>
           <div class="field week-title-field">
             <label for="week-title">周次标题</label>
             <input
@@ -61,14 +73,14 @@
               v-model="weekTitleDraft"
               maxlength="200"
               placeholder="例如：实验 1（表）"
-              @input="weekTitleDirty = true"
+              @input="weekInfoDirty = true"
             />
           </div>
-          <button class="btn-primary" type="button" :disabled="savingWeekTitle || !weekTitleDirty" @click="saveWeekTitle">
-            {{ savingWeekTitle ? '保存中…' : '保存标题' }}
+          <button class="btn-primary" type="button" :disabled="savingWeekInfo || !weekInfoDirty" @click="saveWeekInfo">
+            {{ savingWeekInfo ? '保存中…' : '保存周次信息' }}
           </button>
         </div>
-        <p class="week-import-note">导入时，同 ID 题目及其测试案例会被覆盖，JSON 中新增的题目会被创建；未出现在 JSON 中的现有题目会保留。</p>
+        <p class="week-import-note">导入时，同 ID 题目及其测试案例会被覆盖；JSON 中的 <code>solution</code>（或 <code>standard_answer</code>）会写入标准答案，导入后需重新验证。未出现在 JSON 中的现有题目会保留。</p>
       </section>
 
       <section class="notice-editor-card">
@@ -276,9 +288,10 @@ import {
 const route = useRoute()
 const weekId = Number(route.params.id)
 const weekInfo = ref<WeekOut | null>(null)
+const weekNoDraft = ref<number | null>(null)
 const weekTitleDraft = ref('')
-const weekTitleDirty = ref(false)
-const savingWeekTitle = ref(false)
+const weekInfoDirty = ref(false)
+const savingWeekInfo = ref(false)
 const weekJsonInput = ref<HTMLInputElement | null>(null)
 const importingWeekJson = ref(false)
 const problems = ref<ProblemOut[]>([])
@@ -329,7 +342,10 @@ async function loadAll() {
     ])
     problems.value = loadedProblems
     weekInfo.value = weeks.find(w => w.id === weekId) || null
-    if (!weekTitleDirty.value) weekTitleDraft.value = weekInfo.value?.title || ''
+    if (!weekInfoDirty.value) {
+      weekNoDraft.value = weekInfo.value?.week ?? null
+      weekTitleDraft.value = weekInfo.value?.title || ''
+    }
     if (!noticeDirty.value) noticeDraft.value = weekInfo.value?.notice || ''
     if (!publishAtDirty.value) publishAt.value = utcToShanghaiDateTimeLocal(weekInfo.value?.publish_at || null)
     snapshots.value = loadedSnapshots
@@ -377,25 +393,36 @@ async function saveProblem() {
   } catch (e: any) { alert(e.message || '保存失败') }
 }
 
-async function saveWeekTitle() {
+async function saveWeekInfo() {
   const title = weekTitleDraft.value.trim()
+  const weekNo = Number(weekNoDraft.value)
+  if (!Number.isInteger(weekNo) || weekNo < 1 || weekNo > 52) {
+    alert('周次序号必须是 1 到 52 的整数')
+    return
+  }
   if (!title) {
     alert('周次标题不能为空')
     return
   }
-  savingWeekTitle.value = true
+  savingWeekInfo.value = true
   try {
-    const updated = await adminApi.updateWeek(weekId, { title })
+    const updated = await adminApi.updateWeek(weekId, { week: weekNo, title })
     weekInfo.value = updated
+    weekNoDraft.value = updated.week
     weekTitleDraft.value = updated.title
-    weekTitleDirty.value = false
+    weekInfoDirty.value = false
     snapshots.value = await adminApi.fetchSnapshots(weekId)
-    alert('周次标题已保存')
+    alert('周次信息已保存')
   } catch (e: any) {
-    alert(e.message || '保存标题失败')
+    alert(e.message || '保存周次信息失败')
   } finally {
-    savingWeekTitle.value = false
+    savingWeekInfo.value = false
   }
+}
+
+function hasImportedSolution(problem: any) {
+  const value = problem?.solution ?? problem?.standard_answer ?? problem?.answer
+  return typeof value === 'string' && value.trim().length > 0
 }
 
 function openWeekJsonPicker() {
@@ -441,18 +468,19 @@ async function selectWeekJson(event: Event) {
     ),
     0,
   )
+  const solutionCount = parsed.problems.filter((problem: any) => hasImportedSolution(problem)).length
   const confirmed = confirm(
-    `准备导入“${title || '未命名周次'}”：${parsed.problems.length} 道题、${sampleCount} 个公开样例、${hiddenCount} 个隐藏案例。\n\n同 ID 题目及其测试案例将被覆盖，是否继续？`,
+    `准备导入“${title || '未命名周次'}”：${parsed.problems.length} 道题、${sampleCount} 个公开样例、${hiddenCount} 个隐藏案例、${solutionCount} 份标准答案。\n\n同 ID 题目及其测试案例将被覆盖，是否继续？`,
   )
   if (!confirmed) return
 
   importingWeekJson.value = true
   try {
     const result = await adminApi.importWeekJson(weekId, file)
-    weekTitleDirty.value = false
+    weekInfoDirty.value = false
     await loadAll()
     alert(
-      `导入完成：${result.problems_imported} 道题、${result.samples_imported} 个公开样例、${result.hidden_cases_imported} 个隐藏案例`,
+      `导入完成：${result.problems_imported} 道题、${result.samples_imported} 个公开样例、${result.hidden_cases_imported} 个隐藏案例、${result.solutions_imported} 份标准答案`,
     )
   } catch (e: any) {
     alert(e.message || '导入 JSON 失败')
@@ -699,9 +727,11 @@ onMounted(loadAll)
 .week-editor-head p { margin: 0; color: var(--text-muted); font-size: 12px; }
 .week-import-actions { flex-shrink: 0; }
 .week-title-row { display: flex; align-items: flex-end; gap: 10px; margin-top: 12px; }
+.week-no-field { width: 110px; flex-shrink: 0; margin-bottom: 0; }
 .week-title-field { flex: 1; margin-bottom: 0; }
 .week-title-row .btn-primary { flex-shrink: 0; }
 .week-import-note { margin: 9px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.5; }
+.week-import-note code { font-family: var(--font-mono); }
 .notice-editor-card { margin-top: 14px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
 .notice-editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 9px; }
 .notice-editor-head h3 { margin: 0 0 4px; font-size: 15px; }
@@ -789,6 +819,7 @@ textarea.code, input.code { font-family: var(--font-mono); }
 .btn:disabled, .btn-primary:disabled { cursor: not-allowed; opacity: .6; }
 @media (max-width: 680px) {
   .week-editor-head, .week-title-row { align-items: stretch; flex-direction: column; }
+  .week-no-field { width: 100%; }
   .week-import-actions .btn { width: 100%; }
   .notice-editor-head, .notice-editor-actions { align-items: flex-start; flex-direction: column; }
   .tc-toolbar { align-items: flex-start; flex-direction: column; }

@@ -176,6 +176,14 @@ def create_week(db: Session, data) -> WeekOut:
 def update_week(db: Session, week_id: int, data) -> WeekOut:
     week = _load_week(db, week_id, with_relations=True)
     content_changed = data.title is not None or data.notice is not None
+    if data.week is not None and data.week != week.week:
+        exists = db.execute(
+            select(Week).where(Week.week == data.week, Week.id != week_id)
+        ).scalar_one_or_none()
+        if exists:
+            raise HTTPException(status_code=409, detail="该周次已存在")
+        week.week = data.week
+        content_changed = True
     if data.title is not None:
         week.title = data.title
     if data.notice is not None:
@@ -197,6 +205,12 @@ def update_week(db: Session, week_id: int, data) -> WeekOut:
     return _week_out(db, _load_week(db, week_id))
 
 
+def _imported_solution_code(value: str | None) -> str | None:
+    if value is None or not value.strip():
+        return None
+    return value
+
+
 def import_week_json(db: Session, week_id: int, data: WeekJsonImport) -> WeekJsonImportResult:
     week = _load_week(db, week_id, with_relations=True)
     if data.week != week.week:
@@ -215,8 +229,15 @@ def import_week_json(db: Session, week_id: int, data: WeekJsonImport) -> WeekJso
             )
         for case in cases:
             _validate_case_size(case.input, case.output)
+        solution_code = _imported_solution_code(problem_data.solution)
+        if solution_code is not None and len(solution_code.encode("utf-8")) > settings.max_source_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"题目 {problem_data.id} 的标准答案超出大小限制",
+            )
 
     existing = {problem.stable_id: problem for problem in week.problems}
+    solutions_imported = 0
     for problem_data in data.problems:
         problem = existing.get(problem_data.id)
         if problem is None:
@@ -255,7 +276,16 @@ def import_week_json(db: Session, week_id: int, data: WeekJsonImport) -> WeekJso
                 enabled=case.enabled,
             ))
 
-        if problem.solution is not None:
+        solution_code = _imported_solution_code(problem_data.solution)
+        if solution_code is not None:
+            if problem.solution is None:
+                problem.solution = Solution(code=solution_code, verified=False)
+            else:
+                problem.solution.code = solution_code
+                problem.solution.verified = False
+                problem.solution.last_verified_at = None
+            solutions_imported += 1
+        elif problem.solution is not None:
             problem.solution.verified = False
             problem.solution.last_verified_at = None
 
@@ -270,6 +300,7 @@ def import_week_json(db: Session, week_id: int, data: WeekJsonImport) -> WeekJso
         problems_imported=len(data.problems),
         samples_imported=sum(len(problem.samples) for problem in data.problems),
         hidden_cases_imported=sum(len(problem.test_cases) for problem in data.problems),
+        solutions_imported=solutions_imported,
     )
 
 

@@ -199,6 +199,36 @@ def test_admin_can_update_week_title(client):
     assert client.get(f"/api/admin/weeks/{week_id}").json()["title"] == "实验 1（表）"
 
 
+def test_admin_can_update_week_number_when_unused(client):
+    headers = _login(client)
+    first = client.post("/api/admin/weeks", json={"week": 45, "title": "原周次"}, headers=headers)
+    occupied = client.post("/api/admin/weeks", json={"week": 46, "title": "已占用"}, headers=headers)
+    assert first.status_code == 201
+    assert occupied.status_code == 201
+    week_id = first.json()["id"]
+
+    same = client.patch(f"/api/admin/weeks/{week_id}", json={"week": 45, "title": "原周次"}, headers=headers)
+    assert same.status_code == 200
+    assert same.json()["week"] == 45
+
+    conflict = client.patch(f"/api/admin/weeks/{week_id}", json={"week": 46}, headers=headers)
+    assert conflict.status_code == 409
+    assert client.get(f"/api/admin/weeks/{week_id}").json()["week"] == 45
+
+    invalid = client.patch(f"/api/admin/weeks/{week_id}", json={"week": 0}, headers=headers)
+    assert invalid.status_code == 422
+
+    updated = client.patch(
+        f"/api/admin/weeks/{week_id}",
+        json={"week": 47, "title": "改号后"},
+        headers=headers,
+    )
+    assert updated.status_code == 200
+    assert updated.json()["week"] == 47
+    assert updated.json()["title"] == "改号后"
+    assert client.get(f"/api/admin/weeks/{week_id}").json()["week"] == 47
+
+
 def test_admin_can_import_a_complete_week_json(client):
     headers = _login(client)
     week_id = _create_problem(client, headers, week_number=32)
@@ -252,6 +282,7 @@ def test_admin_can_import_a_complete_week_json(client):
         "problems_imported": 2,
         "samples_imported": 1,
         "hidden_cases_imported": 2,
+        "solutions_imported": 0,
     }
 
     week = client.get(f"/api/admin/weeks/{week_id}").json()
@@ -273,6 +304,45 @@ def test_admin_can_import_a_complete_week_json(client):
     second_cases = client.get(f"/api/admin/weeks/{week_id}/problems/2/testcases").json()
     assert len(second_cases) == 1
     assert second_cases[0]["enabled"] is False
+
+
+def test_admin_can_import_week_json_with_standard_answer(client):
+    headers = _login(client)
+    week_id = _create_problem(client, headers, week_number=48)
+    payload = {
+        "week": 48,
+        "title": "含标准答案",
+        "problems": [
+            {
+                "id": 1,
+                "title": "A + B",
+                "template": "int main() { return 0; }",
+                "samples": [{"input": "1 2\n", "output": "3\n"}],
+                "testCases": [{"input": "3 4\n", "output": "7\n"}],
+                "standard_answer": "#include <stdio.h>\nint main(){int a,b;scanf(\"%d%d\",&a,&b);printf(\"%d\\n\",a+b);}\n",
+            },
+            {
+                "id": 2,
+                "title": "无答案题",
+                "samples": [{"input": "0\n", "output": "0\n"}],
+            },
+        ],
+    }
+    imported = client.post(
+        f"/api/admin/weeks/{week_id}/import-json",
+        files={"file": ("week48.json", json.dumps(payload).encode(), "application/json")},
+        headers=headers,
+    )
+    assert imported.status_code == 200
+    assert imported.json()["solutions_imported"] == 1
+
+    first = client.get(f"/api/admin/weeks/{week_id}/problems/1/solution").json()
+    assert "scanf" in first["code"]
+    assert first["verified"] is False
+
+    second = client.get(f"/api/admin/weeks/{week_id}/problems/2/solution").json()
+    assert second["code"] == ""
+    assert second["verified"] is False
 
 
 def test_week_json_import_rejects_mismatched_week_without_changes(client):

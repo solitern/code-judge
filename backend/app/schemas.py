@@ -133,6 +133,7 @@ class WeekCreate(WeekBase):
 
 
 class WeekUpdate(BaseModel):
+    week: int | None = Field(default=None, ge=1, le=52)
     title: str | None = Field(default=None, max_length=200)
     notice: str | None = Field(default=None, max_length=20000)
     status: str | None = None
@@ -200,6 +201,10 @@ class WeekJsonProblem(BaseModel):
         default_factory=list,
         validation_alias=AliasChoices("testCases", "test_cases"),
     )
+    solution: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("solution", "standard_answer", "answer"),
+    )
 
 
 class WeekJsonImport(BaseModel):
@@ -222,6 +227,7 @@ class WeekJsonImportResult(BaseModel):
     problems_imported: int
     samples_imported: int
     hidden_cases_imported: int
+    solutions_imported: int = 0
 
 
 class ProblemUpsert(BaseModel):
@@ -369,6 +375,7 @@ class ImportReport(BaseModel):
     problems_imported: int = 0
     samples_imported: int = 0
     hidden_cases_imported: int = 0
+    solutions_imported: int = 0
     weeks_updated: int = 0
     errors: list[str] = []
     details: list[str] = []
