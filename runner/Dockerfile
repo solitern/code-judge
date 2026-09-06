@@ -7,6 +7,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         util-linux \
         && rm -rf /var/lib/apt/lists/*
 
+# This tiny static PID-1 supervisor enters the per-case root, irreversibly
+# drops namespace capabilities, then runs and reaps the student process.
+COPY sandbox_launcher.c /tmp/sandbox_launcher.c
+RUN gcc -std=c11 -O2 -static -s \
+        -o /usr/local/bin/sandbox-launcher /tmp/sandbox_launcher.c \
+        && rm /tmp/sandbox_launcher.c
+
 # Create an unprivileged user.  The service runs as this user; student
 # programs also run as this user (mapped to root only inside a user
 # namespace when unshare is available, but never root on the host).

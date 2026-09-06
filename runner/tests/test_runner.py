@@ -99,7 +99,107 @@ def test_infinite_loop_timeout():
 def test_output_limit_exceeded():
     work, binary = _compile("#include <stdio.h>\nint main(){ while(1){ printf(\"x\"); } }", "ole")
     r = run_case(binary, "", Limits(cpu_seconds=2, wall_seconds=5, memory_mb=128, output_kb=32))
-    assert r.status in ("OUTPUT_LIMIT_EXCEEDED", "TIME_LIMIT_EXCEEDED", "RUNTIME_ERROR")
+    assert r.status == "OUTPUT_LIMIT_EXCEEDED"
+
+
+def test_cpu_limit_applies_to_student_process_inside_pid_namespace():
+    work, binary = _compile(
+        """#include <time.h>
+int main(void) {
+    clock_t begin = clock();
+    while ((double)(clock() - begin) / CLOCKS_PER_SEC < 1.5) {}
+    return 0;
+}
+""",
+        "cpu-limit",
+    )
+    result = run_case(binary, "", Limits(cpu_seconds=1, wall_seconds=3, memory_mb=128, output_kb=64))
+    assert result.status == "TIME_LIMIT_EXCEEDED", result
+
+
+def test_cpu_limit_cannot_be_ignored():
+    work, binary = _compile(
+        """#include <signal.h>
+#include <time.h>
+int main(void) {
+    signal(SIGXCPU, SIG_IGN);
+    clock_t begin = clock();
+    while ((double)(clock() - begin) / CLOCKS_PER_SEC < 1.5) {}
+    return 0;
+}
+""",
+        "ignored-cpu-signal",
+    )
+    result = run_case(binary, "", Limits(cpu_seconds=1, wall_seconds=3, memory_mb=128, output_kb=64))
+    assert result.status == "TIME_LIMIT_EXCEEDED", result
+    assert result.time_ms is not None and result.time_ms < 1800, result
+
+
+def test_output_limit_is_detected_when_sigxfsz_is_ignored():
+    work, binary = _compile(
+        """#include <signal.h>
+#include <stdio.h>
+int main(void) {
+    signal(SIGXFSZ, SIG_IGN);
+    for (int i = 0; i < 100000; ++i) putchar('x');
+    return 0;
+}
+""",
+        "ignored-output-signal",
+    )
+    result = run_case(binary, "", Limits(cpu_seconds=2, wall_seconds=3, memory_mb=128, output_kb=16))
+    assert result.status == "OUTPUT_LIMIT_EXCEEDED", result
+    assert len(result.stdout.encode("utf-8")) <= 16 * 1024
+
+
+def test_output_limit_uses_a_non_rewindable_stream():
+    work, binary = _compile(
+        """#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
+#include <unistd.h>
+int main(void) {
+    for (int block = 0; block < 100; ++block) {
+        ftruncate(STDOUT_FILENO, 0);
+        lseek(STDOUT_FILENO, 0, SEEK_SET);
+        for (int i = 0; i < 1024; ++i) putchar('x');
+        fflush(stdout);
+    }
+    return 0;
+}
+""",
+        "rewound-output",
+    )
+    result = run_case(binary, "", Limits(cpu_seconds=2, wall_seconds=3, memory_mb=128, output_kb=16))
+    assert result.status == "OUTPUT_LIMIT_EXCEEDED", result
+
+
+def test_exact_output_limit_is_allowed_but_combined_streams_are_bounded():
+    work, binary = _compile(
+        """#include <stdio.h>
+int main(void) {
+    for (int i = 0; i < 16 * 1024; ++i) putchar('x');
+    return 0;
+}
+""",
+        "exact-output-limit",
+    )
+    limits = Limits(cpu_seconds=2, wall_seconds=3, memory_mb=128, output_kb=16)
+    exact = run_case(binary, "", limits)
+    assert exact.status == "ACCEPTED", exact
+    assert len(exact.stdout.encode("utf-8")) == 16 * 1024
+
+    work, binary = _compile(
+        """#include <stdio.h>
+int main(void) {
+    for (int i = 0; i < 10 * 1024; ++i) putchar('x');
+    for (int i = 0; i < 10 * 1024; ++i) fputc('e', stderr);
+    return 0;
+}
+""",
+        "combined-output-limit",
+    )
+    combined = run_case(binary, "", limits)
+    assert combined.status == "OUTPUT_LIMIT_EXCEEDED", combined
 
 
 def test_temp_dirs_cleaned_after_run():
@@ -234,7 +334,9 @@ def test_isolated_program_cannot_read_a_sibling_task_file():
     secret = sibling / "secret.txt"
     secret.write_text("must-not-leak", encoding="utf-8")
     escaped_path = str(secret).replace("\\", "\\\\").replace('"', '\\"')
-    code = f'''#include <stdio.h>
+    code = f'''#define _GNU_SOURCE
+#include <sched.h>
+#include <stdio.h>
 int main(void) {{
     FILE *f = fopen("{escaped_path}", "r");
     if (f) {{ fclose(f); puts("leaked"); return 1; }}
@@ -244,6 +346,44 @@ int main(void) {{
 '''
     try:
         _, binary = _compile(code, "cross-task-read")
+        result = run_case(binary, "", Limits(cpu_seconds=1, wall_seconds=3, memory_mb=128, output_kb=64))
+        assert result.status == "ACCEPTED", result.stderr
+        assert result.stdout == "blocked\n"
+    finally:
+        shutil.rmtree(sibling, ignore_errors=True)
+
+
+def test_student_cannot_escape_by_chrooting_again():
+    from app.sandbox import RUNNER_TMP_ROOT, unshare_works
+
+    if not unshare_works():
+        pytest.skip("full namespace isolation is unavailable on this host")
+
+    sibling = RUNNER_TMP_ROOT / "chroot-escape-secret"
+    sibling.mkdir(mode=0o700, parents=True, exist_ok=True)
+    secret = sibling / "secret.txt"
+    secret.write_text("must-not-leak", encoding="utf-8")
+    escaped_path = str(secret).replace("\\", "\\\\").replace('"', '\\"')
+    code = f'''#define _GNU_SOURCE
+#include <sched.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <unistd.h>
+int main(void) {{
+    mkdir("inner", 0700);
+    if (unshare(CLONE_NEWUSER) == 0 && chroot("inner") == 0) {{
+        for (int i = 0; i < 64; ++i) chdir("..");
+        if (chroot(".") == 0) {{
+            FILE *f = fopen("{escaped_path}", "r");
+            if (f) {{ fclose(f); puts("leaked"); return 1; }}
+        }}
+    }}
+    puts("blocked");
+    return 0;
+}}
+'''
+    try:
+        _, binary = _compile(code, "chroot-escape")
         result = run_case(binary, "", Limits(cpu_seconds=1, wall_seconds=3, memory_mb=128, output_kb=64))
         assert result.status == "ACCEPTED", result.stderr
         assert result.stdout == "blocked\n"
@@ -263,11 +403,12 @@ def test_pid_namespace_kills_children_that_detach_from_process_group(monkeypatch
 #include <unistd.h>
 int main(void) {
     pid_t pid = fork();
+    if (pid < 0) return 2;
     if (pid == 0) {
         setsid();
         sleep(1);
-        puts("escaped");
-        fflush(stdout);
+        FILE *f = fopen("escaped-child.txt", "w");
+        if (f) { fputs("escaped", f); fclose(f); }
         while (1) {}
     }
     return 0;
@@ -283,7 +424,7 @@ int main(void) {
         time.sleep(1.2)
         case_dirs = list(work.glob("case_*"))
         assert len(case_dirs) == 1
-        assert "escaped" not in (case_dirs[0] / "stdout.txt").read_text(encoding="utf-8")
+        assert not (case_dirs[0] / "escaped-child.txt").exists()
     finally:
-        for case_dir in work.glob("case_*"):
-            original_rmtree(case_dir, ignore_errors=True)
+        for leftover in (*work.glob("case_*"), *work.glob("io_*")):
+            original_rmtree(leftover, ignore_errors=True)

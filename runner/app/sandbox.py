@@ -4,8 +4,8 @@ This sandbox is designed for Linux containers.  It enforces resource limits
 through setrlimit and runs the child program as an unprivileged user.  When
 the required tools are available, it creates user, network, mount and PID
 namespaces for every test case.  The statically linked program is then
-chrooted into an otherwise empty per-case directory, so it cannot inspect
-the runner filesystem, sibling jobs or host processes.
+chrooted into its per-case directory, so it cannot inspect the runner
+filesystem, sibling jobs or host processes.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import resource
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from pathlib import Path
 logger = logging.getLogger("runner.sandbox")
 
 RUNNER_TMP_ROOT = Path(os.environ.get("RUNNER_TMP_ROOT", "/tmp/judge-runner"))
+SANDBOX_LAUNCHER = Path(os.environ.get("RUNNER_SANDBOX_LAUNCHER", "/usr/local/bin/sandbox-launcher"))
 
 
 def isolation_required() -> bool:
@@ -54,12 +56,8 @@ def has_unshare() -> bool:
     return shutil.which("unshare") is not None
 
 
-def has_chroot() -> bool:
-    return shutil.which("chroot") is not None
-
-
-def has_prlimit() -> bool:
-    return shutil.which("prlimit") is not None
+def has_sandbox_launcher() -> bool:
+    return SANDBOX_LAUNCHER.is_file() and os.access(SANDBOX_LAUNCHER, os.X_OK)
 
 
 _unshare_works: bool | None = None
@@ -69,14 +67,14 @@ def unshare_works() -> bool:
     """Return True when the complete namespace + chroot chain is available."""
     global _unshare_works
     if _unshare_works is None:
-        if not has_unshare() or not has_chroot() or not has_prlimit():
+        if not has_unshare() or not has_sandbox_launcher():
             _unshare_works = False
         else:
             try:
                 proc = subprocess.run(
                     [
                         "unshare", "-U", "-r", "-n", "-m", "-p", "-f", "--",
-                        "prlimit", "--nproc=32:32", "--", "chroot", "/", "/bin/true",
+                        str(SANDBOX_LAUNCHER), "/", "/bin/true", "32",
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -104,8 +102,12 @@ def _set_limits(limits: Limits, *, set_nproc: bool = True) -> None:
         except (OSError, ValueError) as exc:
             logger.debug("setrlimit %s failed: %s", res, exc)
 
-    _try_set(resource.RLIMIT_CPU, limits.cpu_seconds, limits.cpu_seconds + 2)
+    # Keep the hard limit equal to the public limit. Student code may catch or
+    # ignore SIGXCPU, but it cannot ignore the kernel's hard-limit SIGKILL.
+    _try_set(resource.RLIMIT_CPU, limits.cpu_seconds, limits.cpu_seconds)
     _try_set(resource.RLIMIT_AS, limits.memory_mb * mb)
+    # This is a defensive per-file limit. Standard output and error use pipes
+    # and are counted cumulatively by the parent process below.
     _try_set(resource.RLIMIT_FSIZE, limits.output_kb * 1024)
     if set_nproc:
         _try_set(resource.RLIMIT_NPROC, limits.nproc)
@@ -113,12 +115,8 @@ def _set_limits(limits: Limits, *, set_nproc: bool = True) -> None:
     _try_set(resource.RLIMIT_STACK, 64 * mb)
 
 
-def _read_limited(path: Path, max_bytes: int) -> str:
-    try:
-        data = path.read_bytes()[:max_bytes]
-    except OSError:
-        return ""
-    return data.decode("utf-8", errors="replace")
+def _decode_limited(data: bytearray, max_bytes: int) -> str:
+    return bytes(data[:max_bytes]).decode("utf-8", errors="replace")
 
 
 def run_case(
@@ -128,16 +126,17 @@ def run_case(
 ) -> RunResult:
     """Run one compiled binary with one stdin in a fresh restricted process."""
     workdir = binary_path.parent
-    case_dir = workdir / f"case_{os.getpid()}_{int(time.time() * 1000000)}"
+    run_id = f"{os.getpid()}_{int(time.time() * 1000000)}"
+    case_dir = workdir / f"case_{run_id}"
+    io_dir = workdir / f"io_{run_id}"
     case_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    stdin_path = case_dir / "stdin.txt"
-    stdout_path = case_dir / "stdout.txt"
-    stderr_path = case_dir / "stderr.txt"
+    io_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    stdin_path = io_dir / "stdin.txt"
     stdin_path.write_text(input_text, encoding="utf-8")
 
     # Give each execution its own root containing only the static binary.
-    # Standard streams are opened by the parent first, so no input/output
-    # files or container paths need to be visible inside the chroot.
+    # Input is opened outside that root and output uses pipes, so no stream
+    # files or container paths are visible inside the chroot.
     isolated = unshare_works()
     if isolated:
         case_binary = case_dir / "main"
@@ -145,8 +144,7 @@ def run_case(
         case_binary.chmod(0o700)
         cmd = [
             "unshare", "-U", "-r", "-n", "-m", "-p", "-f", "--",
-            "prlimit", f"--nproc={limits.nproc}:{limits.nproc}", "--",
-            "chroot", ".", "/main",
+            str(SANDBOX_LAUNCHER), ".", "/main", str(limits.nproc),
         ]
         child_cwd = str(case_dir)
     else:
@@ -155,23 +153,69 @@ def run_case(
 
     start = time.monotonic()
     proc: subprocess.Popen | None = None
+    stdout_data = bytearray()
+    stderr_data = bytearray()
+    output_bytes = 0
+    output_lock = threading.Lock()
+    output_exceeded = threading.Event()
+    reader_threads: list[threading.Thread] = []
+    max_output_bytes = limits.output_kb * 1024
+
+    def collect_output(stream, target: bytearray, keep_bytes: int) -> None:
+        nonlocal output_bytes
+        try:
+            while chunk := os.read(stream.fileno(), 64 * 1024):
+                with output_lock:
+                    output_bytes += len(chunk)
+                    remaining = max(0, keep_bytes - len(target))
+                    target.extend(chunk[:remaining])
+                    if output_bytes > max_output_bytes:
+                        output_exceeded.set()
+        finally:
+            stream.close()
+
+    def stop_process_group() -> None:
+        if proc is None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
     try:
-        with open(stdin_path, "rb") as fin, open(stdout_path, "wb") as fout, open(stderr_path, "wb") as ferr:
+        with open(stdin_path, "rb") as fin:
             proc = subprocess.Popen(
                 cmd,
                 stdin=fin,
-                stdout=fout,
-                stderr=ferr,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 cwd=child_cwd,
                 env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C"},
-                # PID namespaces require one fork. Apply RLIMIT_NPROC through
-                # prlimit after that fork; all other limits can be set here.
+                # PID namespaces and the PID-1 supervisor require two forks.
+                # The supervisor applies RLIMIT_NPROC only to the student.
                 preexec_fn=lambda: _set_limits(limits, set_nproc=not isolated),
                 close_fds=True,
             )
+            assert proc.stdout is not None and proc.stderr is not None
+            reader_threads = [
+                threading.Thread(
+                    target=collect_output,
+                    args=(proc.stdout, stdout_data, max_output_bytes),
+                    daemon=True,
+                ),
+                threading.Thread(
+                    target=collect_output,
+                    args=(proc.stderr, stderr_data, 64 * 1024),
+                    daemon=True,
+                ),
+            ]
+            for thread in reader_threads:
+                thread.start()
+
             deadline = start + limits.wall_seconds
             status = None
             rusage = None
+            forced_status = None
             while True:
                 try:
                     pid, status, rusage = os.wait4(proc.pid, os.WNOHANG)
@@ -179,36 +223,54 @@ def run_case(
                         break
                 except ChildProcessError:
                     break
-                if time.monotonic() > deadline:
+                if output_exceeded.is_set():
+                    forced_status = "OUTPUT_LIMIT_EXCEEDED"
+                    stop_process_group()
                     try:
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        os.wait4(proc.pid, 0)
+                        _, status, rusage = os.wait4(proc.pid, 0)
                     except ChildProcessError:
                         pass
-                    elapsed = (time.monotonic() - start) * 1000
-                    stdout_text = _read_limited(stdout_path, limits.output_kb * 1024)
-                    stderr_text = _read_limited(stderr_path, 64 * 1024)
-                    return RunResult(status="TIME_LIMIT_EXCEEDED", exit_code=None,
-                                     stdout=stdout_text, stderr=stderr_text, time_ms=elapsed)
+                    break
+                if time.monotonic() > deadline:
+                    forced_status = "TIME_LIMIT_EXCEEDED"
+                    stop_process_group()
+                    try:
+                        _, status, rusage = os.wait4(proc.pid, 0)
+                    except ChildProcessError:
+                        pass
+                    break
                 time.sleep(0.005)
 
+            # Exiting PID 1 tears down the PID namespace. Drain both pipes only
+            # after that point so late writes are included in the byte count.
+            stop_process_group()
+            for thread in reader_threads:
+                thread.join(timeout=1)
             elapsed = (time.monotonic() - start) * 1000
             exit_code = os.waitstatus_to_exitcode(status) if status is not None else None
+            proc.returncode = exit_code
             maxrss_kb = float(getattr(rusage, "ru_maxrss", 0)) if rusage is not None else 0.0
-            # The submitted program may have forked children. Always tear down
-            # the whole process group after its leader exits.
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout_text = _read_limited(stdout_path, limits.output_kb * 1024)
-            stderr_text = _read_limited(stderr_path, 64 * 1024)
+            with output_lock:
+                stdout_text = _decode_limited(stdout_data, max_output_bytes)
+                stderr_text = _decode_limited(stderr_data, 64 * 1024)
 
+            if output_exceeded.is_set():
+                return RunResult(status="OUTPUT_LIMIT_EXCEEDED", exit_code=exit_code,
+                                 stdout=stdout_text, stderr=stderr_text,
+                                 time_ms=elapsed, memory_kb=maxrss_kb)
+            if forced_status is not None:
+                return RunResult(status=forced_status, exit_code=exit_code,
+                                 stdout=stdout_text, stderr=stderr_text,
+                                 time_ms=elapsed, memory_kb=maxrss_kb)
+
+            sig = None
             if exit_code is not None and exit_code < 0:
                 sig = -exit_code
+            elif isolated and exit_code is not None and 128 < exit_code <= 192:
+                # The PID-1 launcher reports its child's terminating signal
+                # using the conventional 128 + signal exit status.
+                sig = exit_code - 128
+            if sig is not None:
                 if sig == signal.SIGXFSZ:
                     return RunResult(status="OUTPUT_LIMIT_EXCEEDED", exit_code=exit_code,
                                      stdout=stdout_text, stderr=stderr_text,
@@ -240,9 +302,8 @@ def run_case(
         logger.exception("run_case failed")
         return RunResult(status="SYSTEM_ERROR", stderr=str(exc))
     finally:
-        if proc is not None:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        stop_process_group()
+        for thread in reader_threads:
+            thread.join(timeout=0.1)
         shutil.rmtree(case_dir, ignore_errors=True)
+        shutil.rmtree(io_dir, ignore_errors=True)
