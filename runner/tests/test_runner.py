@@ -277,6 +277,14 @@ def test_run_request_compiles_once_and_runs_each_case(monkeypatch):
     assert len(run_calls) == 2
 
 
+def test_unshare_keeps_mount_propagation_unchanged():
+    from app.sandbox import UNSHARE_PREFIX
+
+    # Docker seccomp + docker-default AppArmor deny mount(MS_REC|MS_PRIVATE).
+    assert "--propagation" in UNSHARE_PREFIX
+    assert "unchanged" in UNSHARE_PREFIX
+
+
 def test_runner_fails_closed_when_required_isolation_is_unavailable(monkeypatch):
     from fastapi.testclient import TestClient
     import app.main as runner_main

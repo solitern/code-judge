@@ -60,6 +60,16 @@ def has_sandbox_launcher() -> bool:
     return SANDBOX_LAUNCHER.is_file() and os.access(SANDBOX_LAUNCHER, os.X_OK)
 
 
+# util-linux `unshare -m` defaults to mount(MS_REC|MS_PRIVATE) on /. That is
+# blocked inside this capability-free container (seccomp + docker-default
+# AppArmor). A new mount namespace is still created; student processes cannot
+# mount after the launcher drops capabilities and installs its filter.
+UNSHARE_PREFIX = [
+    "unshare", "-U", "-r", "-n", "-m", "-p", "-f",
+    "--propagation", "unchanged", "--",
+]
+
+
 _unshare_works: bool | None = None
 
 
@@ -72,16 +82,21 @@ def unshare_works() -> bool:
         else:
             try:
                 proc = subprocess.run(
-                    [
-                        "unshare", "-U", "-r", "-n", "-m", "-p", "-f", "--",
-                        str(SANDBOX_LAUNCHER), "/", "/bin/true", "32",
-                    ],
+                    [*UNSHARE_PREFIX, str(SANDBOX_LAUNCHER), "/", "/bin/true", "32"],
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     timeout=5,
+                    text=True,
                 )
+                if proc.returncode != 0:
+                    logger.warning(
+                        "isolation probe failed rc=%s stderr=%s",
+                        proc.returncode,
+                        (proc.stderr or "").strip(),
+                    )
                 _unshare_works = proc.returncode == 0
             except Exception:
+                logger.exception("isolation probe failed")
                 _unshare_works = False
     return _unshare_works
 
@@ -143,7 +158,7 @@ def run_case(
         shutil.copy2(binary_path, case_binary)
         case_binary.chmod(0o700)
         cmd = [
-            "unshare", "-U", "-r", "-n", "-m", "-p", "-f", "--",
+            *UNSHARE_PREFIX,
             str(SANDBOX_LAUNCHER), ".", "/main", str(limits.nproc),
         ]
         child_cwd = str(case_dir)
