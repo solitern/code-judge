@@ -230,6 +230,31 @@ class WeekJsonImportResult(BaseModel):
     solutions_imported: int = 0
 
 
+class WeekJsonExportProblem(BaseModel):
+    """Week document shaped like example/week1.json so it can be imported again."""
+
+    id: int
+    title: str
+    description: str
+    input_format: str = Field(serialization_alias="inputFormat")
+    output_format: str = Field(serialization_alias="outputFormat")
+    hint: str
+    template: str
+    time_limit_ms: int
+    memory_limit_mb: int
+    output_limit_kb: int
+    sort_order: int
+    samples: list[WeekJsonCase]
+    test_cases: list[WeekJsonCase] = Field(serialization_alias="testCases")
+    solution: str | None = None
+
+
+class WeekJsonExport(BaseModel):
+    week: int
+    title: str
+    problems: list[WeekJsonExportProblem]
+
+
 class ProblemUpsert(BaseModel):
     stable_id: int = Field(ge=1, le=99)
     title: str = Field(default="", max_length=200)

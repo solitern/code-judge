@@ -31,6 +31,7 @@ from ..schemas import (
     TestCaseUpsert,
     WeekCreate,
     WeekDuplicate,
+    WeekJsonExport,
     WeekJsonImport,
     WeekJsonImportResult,
     WeekOut,
@@ -155,6 +156,15 @@ async def import_week_json(
             detail=f"JSON 字段 {field} 校验失败：{error['msg']}",
         ) from exc
     return service.import_week_json(db, week_id, payload)
+
+
+@router.get(
+    "/weeks/{week_id}/export-json",
+    response_model=WeekJsonExport,
+    response_model_exclude_none=True,
+)
+def export_week_json(week_id: int, db: Session = Depends(get_db), username: str = Depends(get_current_admin)):
+    return service.export_week_json(db, week_id)
 
 
 @router.delete("/weeks/{week_id}", status_code=204)

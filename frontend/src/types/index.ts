@@ -74,6 +74,35 @@ export interface WeekOut {
   has_unverified_solution: boolean
 }
 
+export interface WeekJsonCase {
+  input: string
+  output: string
+  enabled?: boolean
+}
+
+export interface WeekJsonProblem {
+  id: number
+  title: string
+  description: string
+  inputFormat: string
+  outputFormat: string
+  hint: string
+  template: string
+  time_limit_ms: number
+  memory_limit_mb: number
+  output_limit_kb: number
+  sort_order: number
+  solution?: string
+  samples: WeekJsonCase[]
+  testCases: WeekJsonCase[]
+}
+
+export interface WeekJsonDocument {
+  week: number
+  title: string
+  problems: WeekJsonProblem[]
+}
+
 export interface WeekJsonImportResult {
   title: string
   problems_imported: number

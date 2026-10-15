@@ -1,5 +1,5 @@
 import { api } from './client'
-import type { DashboardOut, ProblemOut, ProblemPreview, SolutionOut, TestCaseImportItem, TestCaseImportResult, TestCaseOut, WeekJsonImportResult, WeekOut, WeekPreview, RunResponse } from '../types'
+import type { DashboardOut, ProblemOut, ProblemPreview, SolutionOut, TestCaseImportItem, TestCaseImportResult, TestCaseOut, WeekJsonDocument, WeekJsonImportResult, WeekOut, WeekPreview, RunResponse } from '../types'
 
 export function login(username: string, password: string): Promise<{ username: string; csrf_token: string }> {
   return api('/api/admin/login', { method: 'POST', body: JSON.stringify({ username, password }) })
@@ -26,6 +26,9 @@ export function importWeekJson(id: number, file: File): Promise<WeekJsonImportRe
   const body = new FormData()
   body.append('file', file, file.name)
   return api(`/api/admin/weeks/${id}/import-json`, { method: 'POST', body })
+}
+export function exportWeekJson(id: number): Promise<WeekJsonDocument> {
+  return api(`/api/admin/weeks/${id}/export-json`)
 }
 export function deleteWeek(id: number): Promise<void> {
   return api(`/api/admin/weeks/${id}`, { method: 'DELETE' })

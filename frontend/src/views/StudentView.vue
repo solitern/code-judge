@@ -86,7 +86,10 @@
       <section class="panel editor-panel">
         <div class="panel-header">
           <span>💻</span><span>代码编辑器</span>
-          <button class="reset-btn" @click="resetCode">↺ 重置代码</button>
+          <div class="editor-header-actions">
+            <button class="reset-btn" type="button" @click="exportCode">导出 .c</button>
+            <button class="reset-btn" type="button" @click="resetCode">↺ 重置代码</button>
+          </div>
         </div>
         <div class="editor-wrap">
           <CodeEditor v-model="code" :theme="theme" />
@@ -131,7 +134,13 @@
         <ProblemPanel :problem="currentProblem" />
       </section>
       <section v-show="mobileTab === 1" class="mobile-pane code-pane">
-        <CodeEditor v-model="code" :theme="theme" />
+        <div class="mobile-editor-bar">
+          <span>代码编辑器</span>
+          <button class="reset-btn" type="button" @click="exportCode">导出 .c</button>
+        </div>
+        <div class="mobile-editor">
+          <CodeEditor v-model="code" :theme="theme" />
+        </div>
       </section>
       <section v-show="mobileTab === 2" class="mobile-pane result-pane">
         <ResultPanel :visible="true" :loading="running" :loading-text="runningText" :title="resultTitle"
@@ -193,6 +202,7 @@ import ResultPanel from '../components/ResultPanel.vue'
 import * as publicApi from '../api/public'
 import * as adminApi from '../api/admin'
 import { loadCode, saveCode, resetCode as clearStoredCode, setTheme } from '../stores/app'
+import { codeExportFilename, downloadTextFile } from '../utils/download'
 import type { PublicProblem, PublicWeek, PublicWeekSummary, RunResponse } from '../types'
 
 const route = useRoute()
@@ -311,6 +321,14 @@ function resetCode() {
     code.value = currentProblem.value.template
     closeResult()
   }
+}
+
+function exportCode() {
+  downloadTextFile(
+    codeExportFilename(week.value?.week, currentProblem.value?.id),
+    code.value,
+    'text/x-csrc;charset=utf-8',
+  )
 }
 
 async function loadWeek() {
@@ -551,7 +569,8 @@ watch(code, (v) => {
 .action-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
 .status-text { flex: 1; font-size: 12px; color: var(--text-muted); }
 .actions { display: flex; gap: 6px; }
-.reset-btn { margin-left: auto; font-size: 11px; color: var(--text-muted); background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+.editor-header-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+.reset-btn { font-size: 11px; color: var(--text-muted); background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; cursor: pointer; }
 .btn { border: none; border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn-dark { background: var(--neutral-control-bg); color: var(--neutral-control-text); }
@@ -567,7 +586,9 @@ watch(code, (v) => {
 .mobile-tab { flex: 1; padding: 10px; border: none; background: none; font-size: 14px; color: var(--text-muted); cursor: pointer; border-bottom: 2px solid transparent; }
 .mobile-tab.active { color: var(--primary); font-weight: 600; border-bottom-color: var(--primary); }
 .mobile-pane { flex: 1; overflow-y: auto; min-height: 0; padding: 12px; }
-.code-pane { padding: 0; }
+.code-pane { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.mobile-editor-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); background: var(--bg); color: var(--text-secondary); font-size: 13px; font-weight: 600; flex-shrink: 0; }
+.mobile-editor { flex: 1; min-height: 0; }
 .result-pane { padding: 0; }
 .empty-result { color: var(--text-muted); text-align: center; padding: 30px; }
 

@@ -345,6 +345,111 @@ def test_admin_can_import_week_json_with_standard_answer(client):
     assert second["verified"] is False
 
 
+def test_admin_can_export_saved_week_json(client):
+    headers = _login(client)
+    created = client.post(
+        "/api/admin/weeks",
+        json={"week": 41, "title": "旧标题"},
+        headers=headers,
+    )
+    week_id = created.json()["id"]
+    payload = {
+        "week": 41,
+        "title": "导出周次",
+        "problems": [
+            {
+                "id": 2,
+                "title": "第二题",
+                "description": "描述",
+                "inputFormat": "输入",
+                "outputFormat": "输出",
+                "hint": "提示",
+                "template": "int main(void) { return 0; }\n",
+                "time_limit_ms": 1500,
+                "memory_limit_mb": 64,
+                "output_limit_kb": 128,
+                "sort_order": 2,
+                "samples": [{"input": "1\n", "output": "1\n"}],
+                "testCases": [{"input": "2\n", "output": "2\n", "enabled": False}],
+                "solution": "int answer(void) { return 2; }\n",
+            },
+            {
+                "id": 1,
+                "title": "第一题",
+                "sort_order": 1,
+                "samples": [{"input": "a\n", "output": "b\n"}],
+                "testCases": [],
+            },
+        ],
+    }
+    imported = client.post(
+        f"/api/admin/weeks/{week_id}/import-json",
+        files={"file": ("week41.json", json.dumps(payload).encode(), "application/json")},
+        headers=headers,
+    )
+    assert imported.status_code == 200
+
+    exported = client.get(f"/api/admin/weeks/{week_id}/export-json")
+    assert exported.status_code == 200
+    document = exported.json()
+    assert document == {
+        "week": 41,
+        "title": "导出周次",
+        "problems": [
+            {
+                "id": 1,
+                "title": "第一题",
+                "description": "",
+                "inputFormat": "",
+                "outputFormat": "",
+                "hint": "",
+                "template": "",
+                "time_limit_ms": 2000,
+                "memory_limit_mb": 256,
+                "output_limit_kb": 1024,
+                "sort_order": 1,
+                "samples": [{"input": "a\n", "output": "b\n", "enabled": True}],
+                "testCases": [],
+            },
+            {
+                "id": 2,
+                "title": "第二题",
+                "description": "描述",
+                "inputFormat": "输入",
+                "outputFormat": "输出",
+                "hint": "提示",
+                "template": "int main(void) { return 0; }\n",
+                "time_limit_ms": 1500,
+                "memory_limit_mb": 64,
+                "output_limit_kb": 128,
+                "sort_order": 2,
+                "samples": [{"input": "1\n", "output": "1\n", "enabled": True}],
+                "testCases": [{"input": "2\n", "output": "2\n", "enabled": False}],
+                "solution": "int answer(void) { return 2; }\n",
+            },
+        ],
+    }
+
+    again = client.post(
+        f"/api/admin/weeks/{week_id}/import-json",
+        files={"file": ("week41-roundtrip.json", json.dumps(document).encode(), "application/json")},
+        headers=headers,
+    )
+    assert again.status_code == 200
+    assert again.json()["solutions_imported"] == 1
+    assert client.get(f"/api/admin/weeks/{week_id}/export-json").json() == document
+    assert client.get(f"/api/admin/weeks/999999/export-json").status_code == 404
+
+
+def test_week_json_export_requires_login(client):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    anon = TestClient(app)
+    assert anon.get("/api/admin/weeks/1/export-json").status_code == 401
+
+
 def test_week_json_import_rejects_mismatched_week_without_changes(client):
     headers = _login(client)
     created = client.post(

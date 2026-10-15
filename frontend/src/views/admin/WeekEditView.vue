@@ -38,7 +38,7 @@
         <div class="week-editor-head">
           <div>
             <h3>周次信息</h3>
-            <p>周次序号和标题可直接修改；序号未被其他周次占用即可保存。也可以导入 week*.json，一次更新标题、题目、测试案例和标准答案。</p>
+            <p>周次序号和标题可直接修改；序号未被其他周次占用即可保存。也可以导入或导出 week*.json，一次更新标题、题目、测试案例和标准答案。</p>
           </div>
           <div class="week-import-actions">
             <input
@@ -48,8 +48,11 @@
               accept=".json,application/json"
               @change="selectWeekJson"
             />
-            <button class="btn" type="button" :disabled="importingWeekJson" @click="openWeekJsonPicker">
+            <button class="btn" type="button" :disabled="importingWeekJson || exportingWeekJson" @click="openWeekJsonPicker">
               {{ importingWeekJson ? '导入中…' : '导入 JSON' }}
+            </button>
+            <button class="btn" type="button" :disabled="importingWeekJson || exportingWeekJson" @click="downloadWeekJson">
+              {{ exportingWeekJson ? '导出中…' : '导出 JSON' }}
             </button>
           </div>
         </div>
@@ -80,7 +83,7 @@
             {{ savingWeekInfo ? '保存中…' : '保存周次信息' }}
           </button>
         </div>
-        <p class="week-import-note">导入时，同 ID 题目及其测试案例会被覆盖；JSON 中的 <code>solution</code>（或 <code>standard_answer</code>）会写入标准答案，导入后需重新验证。未出现在 JSON 中的现有题目会保留。</p>
+        <p class="week-import-note">导入时，同 ID 题目及其测试案例会被覆盖；JSON 中的 <code>solution</code>（或 <code>standard_answer</code>）会写入标准答案，导入后需重新验证。未出现在 JSON 中的现有题目会保留。导出使用已保存内容，格式与导入文件相同，不包含验证状态。</p>
       </section>
 
       <section class="notice-editor-card">
@@ -278,6 +281,7 @@ import { useRoute } from 'vue-router'
 import AdminNav from '../../components/AdminNav.vue'
 import * as adminApi from '../../api/admin'
 import type { ProblemOut, RunResponse, TestCaseImportItem, TestCaseImportResult, TestCaseOut, WeekOut } from '../../types'
+import { downloadTextFile, weekExportFilename } from '../../utils/download'
 import {
   formatShanghaiTime,
   minimumShanghaiDateTimeLocal,
@@ -294,6 +298,7 @@ const weekInfoDirty = ref(false)
 const savingWeekInfo = ref(false)
 const weekJsonInput = ref<HTMLInputElement | null>(null)
 const importingWeekJson = ref(false)
+const exportingWeekJson = ref(false)
 const problems = ref<ProblemOut[]>([])
 const selectedProblemId = ref<number | null>(null)
 const selectedProblem = ref<ProblemOut | null>(null)
@@ -486,6 +491,23 @@ async function selectWeekJson(event: Event) {
     alert(e.message || '导入 JSON 失败')
   } finally {
     importingWeekJson.value = false
+  }
+}
+
+async function downloadWeekJson() {
+  if (weekInfoDirty.value && !confirm('周次序号或标题尚未保存，导出将使用已保存的内容。是否继续？')) return
+  exportingWeekJson.value = true
+  try {
+    const exported = await adminApi.exportWeekJson(weekId)
+    downloadTextFile(
+      weekExportFilename(exported.week),
+      `${JSON.stringify(exported, null, 2)}\n`,
+      'application/json;charset=utf-8',
+    )
+  } catch (e: any) {
+    alert(e.message || '导出 JSON 失败')
+  } finally {
+    exportingWeekJson.value = false
   }
 }
 
@@ -725,7 +747,7 @@ onMounted(loadAll)
 .week-editor-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .week-editor-head h3 { margin: 0 0 4px; font-size: 15px; }
 .week-editor-head p { margin: 0; color: var(--text-muted); font-size: 12px; }
-.week-import-actions { flex-shrink: 0; }
+.week-import-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
 .week-title-row { display: flex; align-items: flex-end; gap: 10px; margin-top: 12px; }
 .week-no-field { width: 110px; flex-shrink: 0; margin-bottom: 0; }
 .week-title-field { flex: 1; margin-bottom: 0; }

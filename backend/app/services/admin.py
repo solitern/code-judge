@@ -21,6 +21,9 @@ from ..schemas import (
     SolutionOut,
     TestCaseImportItem,
     TestCaseOut,
+    WeekJsonCase,
+    WeekJsonExport,
+    WeekJsonExportProblem,
     WeekJsonImport,
     WeekJsonImportResult,
     WeekOut,
@@ -302,6 +305,43 @@ def import_week_json(db: Session, week_id: int, data: WeekJsonImport) -> WeekJso
         hidden_cases_imported=sum(len(problem.test_cases) for problem in data.problems),
         solutions_imported=solutions_imported,
     )
+
+
+def export_week_json(db: Session, week_id: int) -> WeekJsonExport:
+    """Serialize the saved week into the same JSON shape used by import."""
+    week = _load_week(db, week_id, with_relations=True)
+    problems: list[WeekJsonExportProblem] = []
+    ordered = sorted(week.problems, key=lambda item: (item.sort_order, item.stable_id))
+    for problem in ordered:
+        cases = sorted(problem.testcases, key=lambda item: (item.sort_order, item.id))
+        samples = [
+            WeekJsonCase(input=case.input_text, output=case.expected_output, enabled=case.enabled)
+            for case in cases
+            if case.is_public
+        ]
+        hidden = [
+            WeekJsonCase(input=case.input_text, output=case.expected_output, enabled=case.enabled)
+            for case in cases
+            if not case.is_public
+        ]
+        solution = problem.solution.code if problem.solution is not None else ""
+        problems.append(WeekJsonExportProblem(
+            id=problem.stable_id,
+            title=problem.title,
+            description=problem.description,
+            input_format=problem.input_format,
+            output_format=problem.output_format,
+            hint=problem.hint,
+            template=problem.template,
+            time_limit_ms=problem.time_limit_ms,
+            memory_limit_mb=problem.memory_limit_mb,
+            output_limit_kb=problem.output_limit_kb,
+            sort_order=problem.sort_order,
+            samples=samples,
+            test_cases=hidden,
+            solution=solution if solution.strip() else None,
+        ))
+    return WeekJsonExport(week=week.week, title=week.title, problems=problems)
 
 
 def _change_status(week: Week, new_status: str, publish_at: datetime | None = None) -> None:
